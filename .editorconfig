@@ -7,11 +7,17 @@ indent_style = space
 indent_size = 4
 insert_final_newline = true
 trim_trailing_whitespace = true
-charset = utf-8-bom
-end_of_line = crlf
+charset = utf-8
+end_of_line = lf
+
+[*.{tscn,tres,godot,gdshader}]
+indent_style = tab
+indent_size = 4
+charset = utf-8
 
 # C# Formatting Rules
 [*.cs]
+dotnet_style_namespace_match_folder = false
 
 #### Indentation & Spacing ####
 csharp_indent_braces = false
@@ -52,6 +58,24 @@ dotnet_naming_rule.locals_should_be_camel_case.style = camel_case_style
 dotnet_naming_symbols.locals.applicable_symbol_kinds = parameter, local
 dotnet_naming_style.camel_case_style.capitalization = camel_case
 
+# PascalCase for enum members
+dotnet_naming_rule.enum_members_should_be_pascal_case.severity = suggestion
+dotnet_naming_rule.enum_members_should_be_pascal_case.symbols = enum_members
+dotnet_naming_rule.enum_members_should_be_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.enum_members.applicable_symbol_kinds = enum_member
+
+# PascalCase for constants (public const and static readonly)
+dotnet_naming_rule.constants_should_be_pascal_case.severity = suggestion
+dotnet_naming_rule.constants_should_be_pascal_case.symbols = constants
+dotnet_naming_rule.constants_should_be_pascal_case.style = pascal_case_style
+
+dotnet_naming_symbols.constants.applicable_symbol_kinds = field
+dotnet_naming_symbols.constants.required_modifiers = const, static
+
+# PascalCase for private fields
+dotnet_naming_symbols.private_fields.applicable_access_modifiers = private, protected
+dotnet_naming_symbols.private_fields.required_modifiers =   # leave blank — no modifiers required
 #### Code Style Rules ####
 
 # Require 'private' and other modifiers to be explicit
