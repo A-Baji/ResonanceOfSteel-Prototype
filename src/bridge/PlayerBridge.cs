@@ -189,6 +189,12 @@ namespace ResonanceOfSteel.Bridge
 			_sim.OnHitLanded((Fixed64)vMult, (Fixed64)cMult, blocked);
 		}
 
+		public void NotifyParrySuccess()
+		{
+			_sim.OnParrySuccess();
+			EmitSignal(SignalName.ParrySuccess);
+		}
+
 		// ── Reset (called between rounds) ───────────────────────────────
 		public void FullReset(Vector3 spawnPosition)
 		{

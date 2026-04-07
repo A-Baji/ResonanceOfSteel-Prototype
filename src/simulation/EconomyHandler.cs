@@ -17,7 +17,7 @@ namespace ResonanceOfSteel.Simulation
 		// Derived states
 		public bool IsFatigued => Momentum <= Fixed64.Zero;
 		public bool IsTerminal => Vitality < _c.TerminalVitalityThreshold;
-		public bool IsDeathblowVulnerable => Composure >= Fixed64.One;
+		public bool IsDeathblowVulnerable => Composure >= Fixed64.One || IsTerminal;
 
 		public EconomyHandler(EconomyConstants constants)
 		{
