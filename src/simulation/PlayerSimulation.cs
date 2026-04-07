@@ -2,6 +2,7 @@
 // The authoritative simulation for one player.
 // No Godot imports. No floats. No Node references.
 using FixedMathSharp;
+using Godot;
 using ResonanceOfSteel.Simulation.States;
 
 namespace ResonanceOfSteel.Simulation
@@ -38,10 +39,11 @@ namespace ResonanceOfSteel.Simulation
 		private const int StaggerFrames = 20;
 
 		private readonly EconomyConstants _constants;
-
-		public PlayerSimulation(EconomyConstants constants)
+		private readonly IArchetypeData _archetype;
+		public PlayerSimulation(EconomyConstants constants, IArchetypeData archetype)
 		{
 			_constants = constants;
+			_archetype = archetype;
 			Economy = new EconomyHandler(constants);
 			_state = new Idle();
 		}
@@ -243,6 +245,7 @@ namespace ResonanceOfSteel.Simulation
 		// Called on a successful Perfect Parry.
 		public void OnParrySuccess()
 		{
+			GD.Print("Parry success!");
 			Economy.SpendMomentum(_constants.PerfectParryCost);
 			Economy.IncrementFrameAdvantage();
 			LastEvent = CombatEvent.ParrySuccess;
@@ -254,6 +257,13 @@ namespace ResonanceOfSteel.Simulation
 			Economy.AddClashSurge();
 			LastEvent = CombatEvent.ClashEvent;
 			_state = new Recovery(8, CurrentTier); // Short recovery after clash
+		}
+
+		public bool TryInitiateShatter()
+		{
+			if (!Economy.CanAfford(_constants.ShatterCost)) return false;
+			Economy.SpendMomentum(_constants.ShatterCost);
+			return true;
 		}
 
 		// ── Helpers ────────────────────────────────────────────────────
@@ -280,33 +290,9 @@ namespace ResonanceOfSteel.Simulation
 		}
 
 		// Returns Coil frame count for this tier based on which archetype.
-		// NOTE: ArchetypeType is added in Phase 6. Placeholder uses Longsword for now.
-		private int GetCoilFrames(AttackTier tier) => tier switch
-		{
-			AttackTier.Light => LongswordFrames.FlickCoil,
-			AttackTier.Standard => LongswordFrames.CrossCutCoil,
-			AttackTier.Heavy => LongswordFrames.OverheadCoil,
-			AttackTier.Super => LongswordFrames.LungeCoil,
-			_ => LongswordFrames.CrossCutCoil
-		};
-
-		private int GetSwingFrames(AttackTier tier) => tier switch
-		{
-			AttackTier.Light => LongswordFrames.FlickSwing,
-			AttackTier.Standard => LongswordFrames.CrossCutSwing,
-			AttackTier.Heavy => LongswordFrames.OverheadSwing,
-			AttackTier.Super => LongswordFrames.LungeSwing,
-			_ => LongswordFrames.CrossCutSwing
-		};
-
-		private int GetRecoveryFrames(AttackTier tier) => tier switch
-		{
-			AttackTier.Light => LongswordFrames.FlickRecovery,
-			AttackTier.Standard => LongswordFrames.CrossCutRecovery,
-			AttackTier.Heavy => LongswordFrames.OverheadRecovery,
-			AttackTier.Super => LongswordFrames.LungeRecovery,
-			_ => LongswordFrames.CrossCutRecovery
-		};
+		private int GetCoilFrames(AttackTier tier) => _archetype.GetCoilFrames(tier);
+		private int GetSwingFrames(AttackTier tier) => _archetype.GetSwingFrames(tier);
+		private int GetRecoveryFrames(AttackTier tier) => _archetype.GetRecoveryFrames(tier);
 
 		// Returns the current state type name (for debugging and UI).
 		public string GetStateName() => _state?.GetType().Name ?? "Unknown";

@@ -30,5 +30,7 @@ namespace ResonanceOfSteel.Simulation
 		bool JumpPressed,       // A/Cross pressed this frame
 		AttackTier ModifierTier // Which modifier was held when attack pressed
 	);
+
+	public enum ArchetypeType { Longsword, Greatsword }
 }
 

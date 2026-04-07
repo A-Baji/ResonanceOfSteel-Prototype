@@ -4,6 +4,8 @@
 using Godot;
 using FixedMathSharp;
 using ResonanceOfSteel.Simulation;
+using ResonanceOfSteel.Simulation.Archetypes;
+using ResonanceOfSteel.Bridge.Archetypes;
 
 namespace ResonanceOfSteel.Bridge
 {
@@ -22,7 +24,8 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public int FrameAdvantageThreshold = 3;
 		[Export] public int FrameAdvantageOffset = 3;
 		[Export] public int ShatterContactWindow = 8;
-
+		[Export] public ArchetypeType Archetype = ArchetypeType.Longsword;
+		[Export] public HitboxManager ActiveHitboxManager;
 		// ── Movement constants ──────────────────────────────────────────
 		[Export] public float WalkSpeed = 4.0f;
 		[Export] public float RunSpeed = 7.0f;
@@ -50,11 +53,44 @@ namespace ResonanceOfSteel.Bridge
 		// The opponent bridge (set externally by the match manager in Phase 9).
 		public PlayerBridge Opponent { get; set; }
 
+		// Expose these so HitboxManager can grab them during _Ready or from the Coordinator
+		public IArchetypeData ArchetypeData { get; private set; }
+		public IArchetypeVisuals ArchetypeVisuals { get; private set; }
+
 		public override void _Ready()
 		{
+			// 1. Instantiate the polymorphic archetype classes
+			InitializeArchetype();
+
+			// 2. Initialize simulation and input buffer
 			var constants = BuildConstants();
-			_sim = new PlayerSimulation(constants);
+			_sim = new PlayerSimulation(constants, ArchetypeData);
 			_buffer = new InputBuffer();
+
+			// 3. Inject dependencies into the HitboxManager (if linked in inspector/coordinator)
+			if (ActiveHitboxManager != null)
+			{
+				ActiveHitboxManager.ArchetypeVisuals = ArchetypeVisuals;
+				ActiveHitboxManager.ArchetypeData = ArchetypeData;
+			}
+			else
+			{
+				GD.PushWarning($"ActiveHitboxManager is missing on {Name}!");
+			}
+		}
+
+		private void InitializeArchetype()
+		{
+			if (Archetype == ArchetypeType.Greatsword)
+			{
+				ArchetypeData = new GreatswordData();
+				ArchetypeVisuals = new GreatswordVisuals();
+			}
+			else
+			{
+				ArchetypeData = new LongswordData();
+				ArchetypeVisuals = new LongswordVisuals();
+			}
 		}
 
 		public override void _PhysicsProcess(double delta)
@@ -65,10 +101,10 @@ namespace ResonanceOfSteel.Bridge
 			// 2. Poll hardware input and add new presses to buffer.
 			PollHardwareInput();
 
-			// 3. Build this frame's PlayerInput from buffer and held-state actions.
+			// 3. Build this frame's PlayerInput.
 			var input = BuildPlayerInput();
 
-			// 4. Get opponent position for Right-of-Way calculation.
+			// 4. Calculate opponent position (restored missing logic)
 			var oppX = Opponent != null ? (Fixed64)(double)Opponent.GlobalPosition.X : (Fixed64)0;
 			var oppZ = Opponent != null ? (Fixed64)(double)Opponent.GlobalPosition.Z : (Fixed64)0;
 
@@ -78,10 +114,15 @@ namespace ResonanceOfSteel.Bridge
 			// 6. Apply movement from simulation state.
 			ApplyMovement(input, delta);
 
-			// 7. Emit signals based on events from the simulation.
+			// 7. DETERMINISTIC EXECUTION: Command the hitbox check right now
+			if (ActiveHitboxManager != null)
+			{
+				ActiveHitboxManager.ProcessHitboxes();
+			}
+
+			// 8. Emit signals based on events from the simulation.
 			EmitCombatEvents();
 		}
-
 		// ── Input polling ───────────────────────────────────────────────
 		private void PollHardwareInput()
 		{
@@ -178,15 +219,15 @@ namespace ResonanceOfSteel.Bridge
 		public AttackTier GetCurrentTier() => _sim.CurrentTier;
 
 		// Called by the HitboxManager in Phase 5 when a hit is resolved.
-		public void ReceiveHit(float vMult, float cMult, bool blocked)
+		public void ReceiveHit(Fixed64 vMult, Fixed64 cMult, bool blocked)
 		{
-			_sim.OnHitReceived((Fixed64)vMult, (Fixed64)cMult, blocked);
+			_sim.OnHitReceived(vMult, cMult, blocked);
 		}
 
 		// Called by the HitboxManager when this player's hit landed.
-		public void NotifyHitLanded(float vMult, float cMult, bool blocked)
+		public void NotifyHitLanded(Fixed64 vMult, Fixed64 cMult, bool blocked)
 		{
-			_sim.OnHitLanded((Fixed64)vMult, (Fixed64)cMult, blocked);
+			_sim.OnHitLanded(vMult, cMult, blocked);
 		}
 
 		public void NotifyParrySuccess()

@@ -13,6 +13,8 @@ namespace ResonanceOfSteel.Bridge
 		// Set these from the parent scene.
 		public PlayerBridge OwnerBridge { get; set; }
 		public PlayerBridge OpponentBridge { get; set; }
+		public IArchetypeVisuals ArchetypeVisuals { get; set; }
+		public IArchetypeData ArchetypeData { get; set; }
 
 		// Collision layers (Brief Section 7.2)
 		private const uint HitboxLayer = 2;  // Layer 2: active during Swing
@@ -21,30 +23,26 @@ namespace ResonanceOfSteel.Bridge
 		// Frame counter to prevent registering the same hit twice in one Swing.
 		private bool _hitRegisteredThisSwing = false;
 
-		public override void _PhysicsProcess(double delta)
+		public void ProcessHitboxes()
 		{
 			if (OwnerBridge == null || OpponentBridge == null) return;
 
-			// Reset hit flag when not in Swing.
 			if (!OwnerBridge.IsHitboxActive())
 			{
 				_hitRegisteredThisSwing = false;
 				return;
 			}
 
-			// One hit per Swing phase maximum.
 			if (_hitRegisteredThisSwing) return;
 
-			// Run the manual query.
 			var hit = QueryHitbox();
-			if (hit)
-				ResolveHit();
+			if (hit) ResolveHit();
 		}
 
 		private bool QueryHitbox()
 		{
 			var spaceState = GetWorld3D().DirectSpaceState;
-			var shape = GetHitboxShape(OwnerBridge.GetCurrentTier());
+			var shape = ArchetypeVisuals.GetHitboxShape(OwnerBridge.GetCurrentTier());
 			var myHurtbox = OwnerBridge.GetNode<Area3D>("Hurtbox");
 
 			// Create a transform that is slightly in front of the player
@@ -76,7 +74,7 @@ namespace ResonanceOfSteel.Bridge
 			_hitRegisteredThisSwing = true;
 
 			var tier = OwnerBridge.GetCurrentTier();
-			var mults = GetDamageMultipliers(tier);
+			var mults = ArchetypeData.GetDamageMultipliers(tier);
 
 			// Determine if this is a block, parry, or clean hit.
 			// Check opponent state name (exposed from simulation).
@@ -94,10 +92,10 @@ namespace ResonanceOfSteel.Bridge
 			}
 
 			// Apply damage to opponent.
-			OpponentBridge.ReceiveHit(mults.v, mults.c, isBlocked);
+			OpponentBridge.ReceiveHit(mults.V, mults.C, isBlocked);
 
 			// Notify attacker that hit landed.
-			OwnerBridge.NotifyHitLanded(mults.v, mults.c, isBlocked);
+			OwnerBridge.NotifyHitLanded(mults.V, mults.C, isBlocked);
 		}
 
 		// Returns the hitbox shape for the current attack tier.
