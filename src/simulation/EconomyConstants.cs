@@ -21,7 +21,6 @@ namespace ResonanceOfSteel.Simulation
 		Fixed64 BaseComposureDamage,        // Base composure damage, multiplied by move multiplier
 		int FrameAdvantageThreshold,        // 3 - stacks needed to gain frame advantage
 		int FrameAdvantageOffset,           // 3 - frames subtracted from Coil on advantage
-		int ShatterContactWindow,           // 8 - frames either side of contact for Shatter input
 		Fixed64 ArmorTradeLethality         // 1.5 - Tier 3 armor trade incoming damage multiplier
 	)
 	{
@@ -41,7 +40,6 @@ namespace ResonanceOfSteel.Simulation
 			BaseComposureDamage: (Fixed64)0.06,
 			FrameAdvantageThreshold: 3,
 			FrameAdvantageOffset: 3,
-			ShatterContactWindow: 8,
 			ArmorTradeLethality: (Fixed64)1.5
 		);
 	}

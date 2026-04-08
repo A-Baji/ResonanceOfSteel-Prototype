@@ -25,7 +25,8 @@ namespace ResonanceOfSteel.Simulation
 		Fixed64 MoveZ,          // Left stick vertical, -1 to 1
 		bool RunHeld,           // R2/RT held
 		bool AttackPressed,     // R1/RB pressed this frame
-		bool BlockParryPressed, // L1/LB pressed this frame
+		bool BlockParryPressed, // L1/LB pressed or held this frame
+		bool BlockParryJustPressed, // L1/LB pressed this frame only (not held)
 		bool DodgePressed,      // L2/LT pressed this frame
 		bool JumpPressed,       // A/Cross pressed this frame
 		AttackTier ModifierTier // Which modifier was held when attack pressed

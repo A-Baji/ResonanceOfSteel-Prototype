@@ -23,7 +23,6 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public float ArmorTradeLethality = 1.5f;
 		[Export] public int FrameAdvantageThreshold = 3;
 		[Export] public int FrameAdvantageOffset = 3;
-		[Export] public int ShatterContactWindow = 8;
 		[Export] public ArchetypeType Archetype = ArchetypeType.Longsword;
 		[Export] public HitboxManager ActiveHitboxManager;
 		// ── Movement constants ──────────────────────────────────────────
@@ -40,6 +39,7 @@ namespace ResonanceOfSteel.Bridge
 		[Signal] public delegate void HitBlockedEventHandler();
 		[Signal] public delegate void ParrySuccessEventHandler();
 		[Signal] public delegate void ShatterEventHandler();
+		[Signal] public delegate void ShatterWhiffEventHandler();
 		[Signal] public delegate void ClashEventHandler();
 		[Signal] public delegate void FatigueEnteredEventHandler();
 		[Signal] public delegate void FatigueExitedEventHandler();
@@ -159,6 +159,7 @@ namespace ResonanceOfSteel.Bridge
 				AttackPressed: consumed == PlayerInputAction.Attack,
 				BlockParryPressed: consumed == PlayerInputAction.BlockParry
 								|| Input.IsActionPressed($"block_parry{p}"),
+				BlockParryJustPressed: consumed == PlayerInputAction.BlockParry,
 				DodgePressed: consumed == PlayerInputAction.Dodge,
 				JumpPressed: consumed == PlayerInputAction.Jump,
 				ModifierTier: tier
@@ -198,6 +199,7 @@ namespace ResonanceOfSteel.Bridge
 				case CombatEvent.HitBlocked: EmitSignal(SignalName.HitBlocked); break;
 				case CombatEvent.ParrySuccess: EmitSignal(SignalName.ParrySuccess); break;
 				case CombatEvent.ShatterEvent: EmitSignal(SignalName.Shatter); break;
+				case CombatEvent.ShatterWhiff: EmitSignal(SignalName.ShatterWhiff); break;
 				case CombatEvent.ClashEvent: EmitSignal(SignalName.Clash); break;
 				case CombatEvent.DeathblowTriggered: EmitSignal(SignalName.DeathblowTriggered); break;
 			}
@@ -236,6 +238,18 @@ namespace ResonanceOfSteel.Bridge
 			EmitSignal(SignalName.ParrySuccess);
 		}
 
+		// Returns true if block was pressed within the Shatter contact window.
+		public bool IsInShatterWindow() => _sim.IsInShatterWindow();
+
+		// Spends Shatter momentum cost. Returns false if unaffordable.
+		public bool TryInitiateShatter() => _sim.TryInitiateShatter();
+
+		// Called when this player's Shatter breaks the opponent's parry.
+		public void NotifyShatterLanded() => _sim.OnShatterLanded();
+
+		// Called when this player's Shatter whiffed because the opponent Standard Blocked.
+		public void NotifyShatterWhiff() => _sim.OnShatterWhiff();
+
 		// ── Reset (called between rounds) ───────────────────────────────
 		public void FullReset(Vector3 spawnPosition)
 		{
@@ -262,7 +276,6 @@ namespace ResonanceOfSteel.Bridge
 			BaseComposureDamage: (Fixed64)(double)BaseComposureDamage,
 			FrameAdvantageThreshold: FrameAdvantageThreshold,
 			FrameAdvantageOffset: FrameAdvantageOffset,
-			ShatterContactWindow: ShatterContactWindow,
 			ArmorTradeLethality: (Fixed64)(double)ArmorTradeLethality
 		);
 	}

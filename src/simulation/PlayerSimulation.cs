@@ -32,8 +32,20 @@ namespace ResonanceOfSteel.Simulation
 		// Whether we are in a state where Tier 3 armor is active.
 		public bool ArmorActive { get; private set; }
 
+		// Tracks how many frames ago block was last pressed (any state).
+		// Used by HitboxManager to evaluate the Shatter timing window.
+		private int _blockPressedFramesAgo = int.MaxValue / 2;
+
+		// Set by OnShatterWhiff(); applied as extra Recovery frames when the swing ends.
+		private bool _shatterWhiffRecoveryPenalty = false;
+
 		// Parry window frame data (how long the parry state lasts).
 		private const int ParryWindowFrames = 6;
+		// -4 frame disadvantage on Shatter whiff (Framework Section 4).
+		private const int ShatterWhiffRecoveryPenaltyFrames = 4;
+
+		// Shatter window equals the parry window — same timing requirement on both sides.
+		public bool IsInShatterWindow() => _blockPressedFramesAgo <= ParryWindowFrames;
 		private const int DodgeFrames = 18;
 		private const int JumpFrames = 30;
 		private const int StaggerFrames = 20;
@@ -57,6 +69,13 @@ namespace ResonanceOfSteel.Simulation
 			LastEvent = CombatEvent.None;
 			HitboxActive = false;
 			ArmorActive = false;
+
+			// Track how many frames ago block was last pressed (for Shatter window detection).
+			// Uses JustPressed so holding block doesn't trivially satisfy the timing window.
+			if (input.BlockParryJustPressed)
+				_blockPressedFramesAgo = 0;
+			else if (_blockPressedFramesAgo < int.MaxValue / 2)
+				_blockPressedFramesAgo++;
 
 			// Composure recovers every frame unless Terminal.
 			Economy.TickComposureRecovery();
@@ -156,6 +175,11 @@ namespace ResonanceOfSteel.Simulation
 			{
 				HitboxActive = false;
 				int recoveryFrames = GetRecoveryFrames(s.Tier);
+				if (_shatterWhiffRecoveryPenalty)
+				{
+					recoveryFrames += ShatterWhiffRecoveryPenaltyFrames;
+					_shatterWhiffRecoveryPenalty = false;
+				}
 				return new Recovery(recoveryFrames, s.Tier);
 			}
 			return s with { FramesLeft = framesLeft };
@@ -264,6 +288,28 @@ namespace ResonanceOfSteel.Simulation
 			if (!Economy.CanAfford(_constants.ShatterCost)) return false;
 			Economy.SpendMomentum(_constants.ShatterCost);
 			return true;
+		}
+
+		// Called when this character's Shatter lands (parry was broken).
+		// Mirrors OnHitLanded but fires ShatterEvent instead of HitLand.
+		public void OnShatterLanded()
+		{
+			GD.Print("Shatter landed!");
+			Economy.AddMomentumOnHit();
+			Economy.ResetFrameAdvantage();
+			LastEvent = CombatEvent.ShatterEvent;
+		}
+
+		// Called when Shatter was attempted but the defender used Standard Block instead of Parry.
+		// Per Framework Section 4: block occurs normally, attacker loses Momentum and suffers
+		// a -4 frame Recovery penalty (disadvantage) on the current swing.
+		public void OnShatterWhiff()
+		{
+			GD.Print("Shatter whiffed!");
+			// Unconditional drain — the full cost is extracted even if Momentum runs out.
+			Economy.SpendMomentum(_constants.ShatterCost);
+			_shatterWhiffRecoveryPenalty = true;
+			LastEvent = CombatEvent.ShatterWhiff;
 		}
 
 		// ── Helpers ────────────────────────────────────────────────────

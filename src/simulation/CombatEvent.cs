@@ -10,6 +10,7 @@ namespace ResonanceOfSteel.Simulation
 		ParrySuccess,      // A Perfect Parry succeeded
 		ParryFailed,       // Tried to parry but timing was wrong
 		ShatterEvent,      // A Shatter landed (defender parry broken)
+		ShatterWhiff,      // Shatter attempted against a Standard Block — attacker penalized
 		ClashEvent,        // Two attacks of the same tier met simultaneously
 		DodgeSuccess,      // A dodge was executed
 		FatigueEntered,    // Momentum hit zero

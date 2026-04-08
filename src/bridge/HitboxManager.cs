@@ -81,13 +81,35 @@ namespace ResonanceOfSteel.Bridge
 			string oppState = OpponentBridge.GetStateName();
 			bool isBlocked = oppState == "Blocking" || oppState == "Parrying";
 			bool isParried = oppState == "Parrying";
+			bool attackerAttemptingShatter = OwnerBridge.IsInShatterWindow();
 
 			if (isParried)
 			{
-				// Parry success — defender gets the benefit.
-				// Check if it's a Shatter (attacker used Shatter modifier).
-				// For now: treat as standard parry. Shatter added in Phase 6.
-				OpponentBridge.NotifyParrySuccess();
+				// Shatter: the attacker pressed block within the parry window of this contact
+				// frame (opponent being in Parrying already guarantees their side), and the
+				// attacker can afford the Momentum cost.
+				bool isShatter = attackerAttemptingShatter && OwnerBridge.TryInitiateShatter();
+
+				if (isShatter)
+				{
+					// Break the parry — deal full unblocked damage to the defender.
+					OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: false);
+					OwnerBridge.NotifyShatterLanded();
+				}
+				else
+				{
+					OpponentBridge.NotifyParrySuccess();
+				}
+				return;
+			}
+
+			if (attackerAttemptingShatter)
+			{
+				// Shatter whiff (Framework Section 4): defender used Standard Block, not Parry.
+				// The block still protects the defender normally, but the attacker is penalized:
+				// Momentum is drained and a -4 frame Recovery disadvantage is applied.
+				OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: true);
+				OwnerBridge.NotifyShatterWhiff();
 				return;
 			}
 
