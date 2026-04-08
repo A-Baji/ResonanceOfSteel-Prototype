@@ -1,0 +1,86 @@
+[gd_scene format=3 uid="uid://dhh04lrqcs7yd"]
+
+[ext_resource type="Script" uid="uid://cj7vro48edc4w" path="res://src/scene/MainCoordinator.cs" id="1_elqb8"]
+[ext_resource type="PackedScene" uid="uid://hhva0s3ofh74" path="res://scenes/Game.tscn" id="2_rvslj"]
+[ext_resource type="Script" uid="uid://bd046eokvcnu2" path="res://addons/phantom_camera/scripts/phantom_camera_host/phantom_camera_host.gd" id="2_vcsgt"]
+[ext_resource type="Script" uid="uid://csjccrhj5wnx7" path="res://addons/phantom_camera/scripts/phantom_camera/phantom_camera_3d.gd" id="3_c01mt"]
+[ext_resource type="Script" uid="uid://8umksf8e80fw" path="res://addons/phantom_camera/scripts/resources/tween_resource.gd" id="4_nxtc6"]
+
+[sub_resource type="Resource" id="Resource_jlsqs"]
+script = ExtResource("4_nxtc6")
+
+[sub_resource type="Resource" id="Resource_q8u5g"]
+script = ExtResource("4_nxtc6")
+
+[node name="Node" type="Control" unique_id=1616844747]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_elqb8")
+
+[node name="HBoxContainer" type="HBoxContainer" parent="." unique_id=2144755512]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="SubViewportContainer" type="SubViewportContainer" parent="HBoxContainer" unique_id=1408465896]
+layout_mode = 2
+size_flags_horizontal = 3
+stretch = true
+
+[node name="ViewportP1" type="SubViewport" parent="HBoxContainer/SubViewportContainer" unique_id=659371821]
+handle_input_locally = false
+size = Vector2i(574, 648)
+render_target_update_mode = 4
+
+[node name="CameraP1" type="Camera3D" parent="HBoxContainer/SubViewportContainer/ViewportP1" unique_id=1446921706]
+top_level = true
+current = true
+
+[node name="PhantomCameraHost" type="Node" parent="HBoxContainer/SubViewportContainer/ViewportP1/CameraP1" unique_id=1463885746]
+process_priority = 300
+process_physics_priority = 300
+script = ExtResource("2_vcsgt")
+metadata/_custom_type_script = "uid://bd046eokvcnu2"
+
+[node name="PCam_P1" type="Node3D" parent="HBoxContainer/SubViewportContainer/ViewportP1" unique_id=1057959961]
+script = ExtResource("3_c01mt")
+follow_mode = 6
+look_at_mode = 2
+tween_resource = SubResource("Resource_jlsqs")
+metadata/_custom_type_script = "uid://csjccrhj5wnx7"
+
+[node name="SubViewportContainer2" type="SubViewportContainer" parent="HBoxContainer" unique_id=530873789]
+layout_mode = 2
+size_flags_horizontal = 3
+stretch = true
+
+[node name="ViewportP2" type="SubViewport" parent="HBoxContainer/SubViewportContainer2" unique_id=881300693]
+handle_input_locally = false
+size = Vector2i(574, 648)
+render_target_update_mode = 4
+
+[node name="CameraP2" type="Camera3D" parent="HBoxContainer/SubViewportContainer2/ViewportP2" unique_id=2022907342]
+top_level = true
+current = true
+
+[node name="PhantomCameraHost" type="Node" parent="HBoxContainer/SubViewportContainer2/ViewportP2/CameraP2" unique_id=432623403]
+process_priority = 300
+process_physics_priority = 300
+script = ExtResource("2_vcsgt")
+metadata/_custom_type_script = "uid://bd046eokvcnu2"
+
+[node name="PCam_P2" type="Node3D" parent="HBoxContainer/SubViewportContainer2/ViewportP2" unique_id=638051637]
+script = ExtResource("3_c01mt")
+follow_mode = 6
+look_at_mode = 2
+tween_resource = SubResource("Resource_q8u5g")
+metadata/_custom_type_script = "uid://csjccrhj5wnx7"
+
+[node name="GameScene" parent="." unique_id=184557635 instance=ExtResource("2_rvslj")]
