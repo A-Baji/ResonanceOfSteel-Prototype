@@ -1,8 +1,7 @@
 using Godot;
 using ResonanceOfSteel.Bridge;
 
-// Changed class name from DebugLabel to Label to match Label.cs
-public partial class Label : Godot.Label
+public partial class HUD : Godot.Label
 {
 	[Export] public PlayerBridge TargetPlayer;
 

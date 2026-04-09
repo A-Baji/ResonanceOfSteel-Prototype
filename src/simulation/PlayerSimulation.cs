@@ -112,19 +112,25 @@ namespace ResonanceOfSteel.Simulation
 
 		private object ProcessIdle(PlayerInput input, Idle s)
 		{
+			// Check for movement
+			if (HasMovementInput(input)) return new Moving(input.RunHeld);
+
+			// Check for attack
 			if (input.AttackPressed) return TransitionToCoil(input.ModifierTier);
 
-			// Fatigue gates these three:
-			if (!Economy.IsFatigued)
-			{
-				if (input.BlockParryJustPressed) return new Parrying(ParryWindowFrames);
-				if (input.DodgePressed) { /* spend and dodge */ }
-				if (input.JumpPressed) return new Jumping(JumpFrames);
-			}
-			else if (input.BlockParryPressed) return new Blocking(); // Standard block still allowed
+			// Check for block/parry (press enters parry window; held enters block)
+			if (input.BlockParryPressed) return new Parrying(ParryWindowFrames);
 
-			if (HasMovementInput(input)) return new Moving(input.RunHeld);
-			return s;
+			// Check for dodge
+			if (input.DodgePressed && Economy.CanAfford(_constants.DodgeCost))
+			{
+				Economy.SpendMomentum(_constants.DodgeCost);
+				return new Dodging(DodgeFrames);
+			}
+
+			if (input.JumpPressed) return new Jumping(JumpFrames);
+
+			return s; // Stay Idle
 		}
 
 		private object ProcessMoving(PlayerInput input, Moving s)
@@ -172,7 +178,6 @@ namespace ResonanceOfSteel.Simulation
 					recoveryFrames += ShatterWhiffRecoveryPenaltyFrames;
 					_shatterWhiffRecoveryPenalty = false;
 				}
-				if (Economy.IsFatigued) recoveryFrames = (int)(recoveryFrames * _constants.FatigueRecoveryMultiplier);
 				return new Recovery(recoveryFrames, s.Tier);
 			}
 			return s with { FramesLeft = framesLeft };
