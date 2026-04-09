@@ -3,7 +3,8 @@
 [ext_resource type="Script" uid="uid://f6f3bul7hs5g" path="res://src/scene/GameCoordinator.cs" id="1_18ig4"]
 [ext_resource type="Script" uid="uid://ccjk6hno3t7yu" path="res://src/bridge/PlayerBridge.cs" id="2_7s5hy"]
 [ext_resource type="Script" uid="uid://b8oei3ahu445h" path="res://src/bridge/HitboxManager.cs" id="3_xs4ih"]
-[ext_resource type="Script" uid="uid://bs3uh8xh4x441" path="res://scenes/Label.cs" id="4_6ytau"]
+[ext_resource type="Script" uid="uid://bs3uh8xh4x441" path="res://src/presentation/Label.cs" id="4_6ytau"]
+[ext_resource type="Script" uid="uid://c8avj4fnq5xu0" path="res://src/scene/CameraController.cs" id="4_s0nni"]
 
 [sub_resource type="Environment" id="Environment_rwgxs"]
 
@@ -47,10 +48,11 @@ mesh = SubResource("BoxMesh_k0juu")
 [node name="CollisionShape3D" type="CollisionShape3D" parent="Ground" unique_id=738588189]
 shape = SubResource("BoxShape3D_k0juu")
 
-[node name="Player1" type="CharacterBody3D" parent="." unique_id=571389422 node_paths=PackedStringArray("ActiveHitboxManager")]
+[node name="Player1" type="CharacterBody3D" parent="." unique_id=571389422 node_paths=PackedStringArray("ActiveHitboxManager", "CameraPivot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, 1.568, 0)
 script = ExtResource("2_7s5hy")
 ActiveHitboxManager = NodePath("HitboxManager_P1")
+CameraPivot = NodePath("CameraPivot")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Player1" unique_id=1395625688]
 mesh = SubResource("CapsuleMesh_71j4m")
@@ -69,11 +71,21 @@ shape = SubResource("CapsuleShape3D_i7141")
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, -1.568, 0)
 script = ExtResource("3_xs4ih")
 
-[node name="Player2" type="CharacterBody3D" parent="." unique_id=1372655320 node_paths=PackedStringArray("ActiveHitboxManager")]
+[node name="CameraPivot" type="Node3D" parent="Player1" unique_id=376232644]
+script = ExtResource("4_s0nni")
+
+[node name="SpringArm" type="SpringArm3D" parent="Player1/CameraPivot" unique_id=1369629432]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+spring_length = 5.0
+
+[node name="RemoteTransform" type="RemoteTransform3D" parent="Player1/CameraPivot/SpringArm" unique_id=63475116]
+
+[node name="Player2" type="CharacterBody3D" parent="." unique_id=1372655320 node_paths=PackedStringArray("ActiveHitboxManager", "CameraPivot")]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, -3, 1.5, 0)
 script = ExtResource("2_7s5hy")
 Archetype = 1
 ActiveHitboxManager = NodePath("HitboxManager_P2")
+CameraPivot = NodePath("CameraPivot")
 
 [node name="MeshInstance3D" type="MeshInstance3D" parent="Player2" unique_id=1555199973]
 mesh = SubResource("CapsuleMesh_k0juu")
@@ -91,6 +103,15 @@ shape = SubResource("CapsuleShape3D_4mrxx")
 [node name="HitboxManager_P2" type="Node3D" parent="Player2" unique_id=822635700]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 3, -1.5, 0)
 script = ExtResource("3_xs4ih")
+
+[node name="CameraPivot" type="Node3D" parent="Player2" unique_id=832675089]
+script = ExtResource("4_s0nni")
+
+[node name="SpringArm" type="SpringArm3D" parent="Player2/CameraPivot" unique_id=1251904628]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+spring_length = 5.0
+
+[node name="RemoteTransform" type="RemoteTransform3D" parent="Player2/CameraPivot/SpringArm" unique_id=1614934524]
 
 [node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1406802145]
 

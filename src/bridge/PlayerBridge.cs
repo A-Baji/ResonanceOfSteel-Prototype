@@ -28,6 +28,7 @@ namespace ResonanceOfSteel.Bridge
 		// ── Movement constants ──────────────────────────────────────────
 		[Export] public float WalkSpeed = 4.0f;
 		[Export] public float RunSpeed = 7.0f;
+		[Export] public Node3D CameraPivot; // Wire to Player's CameraPivot in inspector
 
 		// ── Which player this bridge controls ───────────────────────────
 		// 0 = Player 1 (uses default action names)
@@ -113,6 +114,7 @@ namespace ResonanceOfSteel.Bridge
 
 			// 6. Apply movement from simulation state.
 			ApplyMovement(input, delta);
+			FaceOpponent(delta);
 
 			// 7. DETERMINISTIC EXECUTION: Command the hitbox check right now
 			if (ActiveHitboxManager != null)
@@ -169,18 +171,20 @@ namespace ResonanceOfSteel.Bridge
 		// ── Movement application ────────────────────────────────────────
 		private void ApplyMovement(PlayerInput input, double delta)
 		{
-			// Simple movement: move in the direction of left stick.
-			// Rotation to face movement direction.
 			if (input.MoveX != Fixed64.Zero || input.MoveZ != Fixed64.Zero)
 			{
 				float speed = (bool)input.RunHeld ? RunSpeed : WalkSpeed;
-				var vel = new Vector3((float)input.MoveX, 0, (float)input.MoveZ).Normalized() * speed;
-				Velocity = vel;
 
-				// Face movement direction.
-				var lookDir = new Vector3((float)input.MoveX, 0, (float)input.MoveZ);
-				if (lookDir.LengthSquared() > 0)
-					Rotation = new Vector3(0, Mathf.Atan2(-lookDir.X, -lookDir.Z), 0);
+				// Build camera-relative move direction from the pivot's basis.
+				var basis = CameraPivot != null ? CameraPivot.GlobalTransform.Basis
+													: Basis.Identity;
+				var camForward = new Vector3(-basis.Z.X, 0, -basis.Z.Z).Normalized();
+				var camRight = new Vector3(basis.X.X, 0, basis.X.Z).Normalized();
+
+				var moveDir = (camForward * -(float)input.MoveZ
+							 + camRight * (float)input.MoveX).Normalized();
+
+				Velocity = moveDir * speed;
 			}
 			else
 			{
@@ -188,6 +192,25 @@ namespace ResonanceOfSteel.Bridge
 			}
 
 			MoveAndSlide();
+		}
+
+		// -- Always face opponent -──────────────────────────────────────
+		private void FaceOpponent(double delta)
+		{
+			if (Opponent == null) return;
+
+			var toOpponent = Opponent.GlobalPosition - GlobalPosition;
+			toOpponent.Y = 0;
+			if (toOpponent.LengthSquared() < 0.001f) return;
+
+			float targetYaw = Mathf.Atan2(-toOpponent.X, -toOpponent.Z);
+			float current = GlobalRotation.Y;
+			float diff = Mathf.AngleDifference(current, targetYaw);
+
+			GlobalRotation = GlobalRotation with
+			{
+				Y = current + diff
+			};
 		}
 
 		// ── Event emission ──────────────────────────────────────────────

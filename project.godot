@@ -15,17 +15,13 @@ run/main_scene="uid://dhh04lrqcs7yd"
 config/features=PackedStringArray("4.6", "C#", "Forward Plus")
 config/icon="res://icon.svg"
 
-[autoload]
-
-PhantomCameraManager="*uid://duq6jhf6unyis"
-
 [dotnet]
 
 project/assembly_name="ResonanceOfSteelPrototype"
 
 [editor_plugins]
 
-enabled=PackedStringArray("res://addons/phantom_camera/plugin.cfg")
+enabled=PackedStringArray()
 
 [input]
 
