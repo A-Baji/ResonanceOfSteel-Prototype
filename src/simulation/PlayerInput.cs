@@ -4,7 +4,7 @@ namespace ResonanceOfSteel.Simulation
 {
 	// AttackTier maps to the modifier buttons defined in the Prototype Brief Section 4.
 	// None means no modifier was held when attack was pressed.
-	public enum AttackTier { None, Light, Standard, Heavy, Super }
+	public enum AttackTier { Light, Standard, Heavy, Super }
 
 	// PlayerInputAction is what gets stored in the TTL input buffer.
 	// See Prototype Brief Section 4.2 for priority ordering.

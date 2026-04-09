@@ -22,7 +22,7 @@ namespace ResonanceOfSteel.Simulation
 		public EconomyHandler(EconomyConstants constants)
 		{
 			_c = constants;
-			Momentum = Fixed64.Zero;      // Start with no Momentum
+			Momentum = (Fixed64)4.0;      // Start with no Momentum
 			Composure = Fixed64.Zero;      // Start with no Composure strain
 			Vitality = Fixed64.One;       // Start at full health
 		}

@@ -2,7 +2,6 @@
 // The authoritative simulation for one player.
 // No Godot imports. No floats. No Node references.
 using FixedMathSharp;
-using Godot;
 using ResonanceOfSteel.Simulation.States;
 
 namespace ResonanceOfSteel.Simulation
@@ -82,7 +81,7 @@ namespace ResonanceOfSteel.Simulation
 
 			// Right-of-Way Momentum: are we moving toward the opponent?
 			var movingTowardOpponent = IsMovingToward(input, opponentPosX, opponentPosZ);
-			if (movingTowardOpponent && (_state is Idle || _state is Moving || _state is Fatigued))
+			if (movingTowardOpponent && (_state is Idle || _state is Moving))
 				Economy.AddRightOfWayMomentum(input.RunHeld);
 
 			// Delegate to state-specific logic.
@@ -104,7 +103,6 @@ namespace ResonanceOfSteel.Simulation
 				Dodging s => ProcessDodging(input, s),
 				Jumping s => ProcessJumping(input, s),
 				Staggered s => ProcessStaggered(input, s),
-				Fatigued s => ProcessFatigued(input, s),
 				Deathblow => new Deathblow(), // No inputs accepted in Deathblow
 				_ => new Idle()
 			};
@@ -114,25 +112,19 @@ namespace ResonanceOfSteel.Simulation
 
 		private object ProcessIdle(PlayerInput input, Idle s)
 		{
-			// Check for movement
-			if (HasMovementInput(input)) return new Moving(input.RunHeld);
-
-			// Check for attack
 			if (input.AttackPressed) return TransitionToCoil(input.ModifierTier);
 
-			// Check for block/parry (press enters parry window; held enters block)
-			if (input.BlockParryPressed) return new Parrying(ParryWindowFrames);
-
-			// Check for dodge
-			if (input.DodgePressed && Economy.CanAfford(_constants.DodgeCost))
+			// Fatigue gates these three:
+			if (!Economy.IsFatigued)
 			{
-				Economy.SpendMomentum(_constants.DodgeCost);
-				return new Dodging(DodgeFrames);
+				if (input.BlockParryJustPressed) return new Parrying(ParryWindowFrames);
+				if (input.DodgePressed) { /* spend and dodge */ }
+				if (input.JumpPressed) return new Jumping(JumpFrames);
 			}
+			else if (input.BlockParryPressed) return new Blocking(); // Standard block still allowed
 
-			if (input.JumpPressed) return new Jumping(JumpFrames);
-
-			return s; // Stay Idle
+			if (HasMovementInput(input)) return new Moving(input.RunHeld);
+			return s;
 		}
 
 		private object ProcessMoving(PlayerInput input, Moving s)
@@ -180,6 +172,7 @@ namespace ResonanceOfSteel.Simulation
 					recoveryFrames += ShatterWhiffRecoveryPenaltyFrames;
 					_shatterWhiffRecoveryPenalty = false;
 				}
+				if (Economy.IsFatigued) recoveryFrames = (int)(recoveryFrames * _constants.FatigueRecoveryMultiplier);
 				return new Recovery(recoveryFrames, s.Tier);
 			}
 			return s with { FramesLeft = framesLeft };
@@ -231,15 +224,6 @@ namespace ResonanceOfSteel.Simulation
 			return s with { FramesLeft = framesLeft };
 		}
 
-		private object ProcessFatigued(PlayerInput input, Fatigued s)
-		{
-			// Fatigued: limited inputs. Attack, Block, Run allowed (Brief Section 5).
-			// Exit when Momentum > 0 via Clash or strike landing (handled externally).
-			if (!Economy.IsFatigued) return new Idle();
-			if (input.AttackPressed) return TransitionToCoil(input.ModifierTier);
-			return s;
-		}
-
 		// ── External event handlers (called by Bridge after hit detection) ───
 
 		// Called when this character's hitbox connects with the opponent.
@@ -269,7 +253,6 @@ namespace ResonanceOfSteel.Simulation
 		// Called on a successful Perfect Parry.
 		public void OnParrySuccess()
 		{
-			GD.Print("Parry success!");
 			Economy.SpendMomentum(_constants.PerfectParryCost);
 			Economy.IncrementFrameAdvantage();
 			LastEvent = CombatEvent.ParrySuccess;
@@ -294,7 +277,6 @@ namespace ResonanceOfSteel.Simulation
 		// Mirrors OnHitLanded but fires ShatterEvent instead of HitLand.
 		public void OnShatterLanded()
 		{
-			GD.Print("Shatter landed!");
 			Economy.AddMomentumOnHit();
 			Economy.ResetFrameAdvantage();
 			LastEvent = CombatEvent.ShatterEvent;
@@ -305,7 +287,6 @@ namespace ResonanceOfSteel.Simulation
 		// a -4 frame Recovery penalty (disadvantage) on the current swing.
 		public void OnShatterWhiff()
 		{
-			GD.Print("Shatter whiffed!");
 			// Unconditional drain — the full cost is extracted even if Momentum runs out.
 			Economy.SpendMomentum(_constants.ShatterCost);
 			_shatterWhiffRecoveryPenalty = true;

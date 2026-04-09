@@ -3,8 +3,9 @@
 [ext_resource type="Script" uid="uid://f6f3bul7hs5g" path="res://src/scene/GameCoordinator.cs" id="1_18ig4"]
 [ext_resource type="Script" uid="uid://ccjk6hno3t7yu" path="res://src/bridge/PlayerBridge.cs" id="2_7s5hy"]
 [ext_resource type="Script" uid="uid://b8oei3ahu445h" path="res://src/bridge/HitboxManager.cs" id="3_xs4ih"]
-[ext_resource type="Script" uid="uid://bs3uh8xh4x441" path="res://src/presentation/Label.cs" id="4_6ytau"]
+[ext_resource type="Script" uid="uid://bs3uh8xh4x441" path="res://src/presentation/HUD.cs" id="4_6ytau"]
 [ext_resource type="Script" uid="uid://c8avj4fnq5xu0" path="res://src/scene/CameraController.cs" id="4_s0nni"]
+[ext_resource type="Script" uid="uid://chd10bf4suuy2" path="res://src/bridge/RoundManager.cs" id="6_aug50"]
 
 [sub_resource type="Environment" id="Environment_rwgxs"]
 
@@ -130,3 +131,8 @@ offset_bottom = 23.0
 grow_horizontal = 0
 script = ExtResource("4_6ytau")
 TargetPlayer = NodePath("../../Player2")
+
+[node name="RoundManager" type="Node" parent="." unique_id=1212088111 node_paths=PackedStringArray("Player1", "Player2")]
+script = ExtResource("6_aug50")
+Player1 = NodePath("../Player1")
+Player2 = NodePath("../Player2")

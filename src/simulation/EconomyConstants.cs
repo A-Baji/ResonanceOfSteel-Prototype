@@ -21,7 +21,8 @@ namespace ResonanceOfSteel.Simulation
 		Fixed64 BaseComposureDamage,        // Base composure damage, multiplied by move multiplier
 		int FrameAdvantageThreshold,        // 3 - stacks needed to gain frame advantage
 		int FrameAdvantageOffset,           // 3 - frames subtracted from Coil on advantage
-		Fixed64 ArmorTradeLethality         // 1.5 - Tier 3 armor trade incoming damage multiplier
+		Fixed64 ArmorTradeLethality,        // 1.5 - Tier 3 armor trade incoming damage multiplier
+		Fixed64 FatigueRecoveryMultiplier   // 1.5 - recovery time multiplier when fatigued (Momentum at zero)
 	)
 	{
 		// Factory method returning the defaults from the Prototype Brief.
@@ -40,7 +41,8 @@ namespace ResonanceOfSteel.Simulation
 			BaseComposureDamage: (Fixed64)0.06,
 			FrameAdvantageThreshold: 3,
 			FrameAdvantageOffset: 3,
-			ArmorTradeLethality: (Fixed64)1.5
+			ArmorTradeLethality: (Fixed64)1.5,
+			FatigueRecoveryMultiplier: (Fixed64)1.5
 		);
 	}
 }

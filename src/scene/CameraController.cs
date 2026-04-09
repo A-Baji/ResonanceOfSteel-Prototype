@@ -1,7 +1,7 @@
 using System.ComponentModel;
 using Godot;
 
-namespace ResonanceOfSteel.Bridge
+namespace ResonanceOfSteel.Scene
 {
 	public partial class CameraController : Node3D
 	{

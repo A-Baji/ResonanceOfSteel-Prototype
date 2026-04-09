@@ -1,6 +1,6 @@
 using Godot;
 
-namespace ResonanceOfSteel.Bridge
+namespace ResonanceOfSteel.Scene
 {
 	public partial class MainCoordinator : Node
 	{

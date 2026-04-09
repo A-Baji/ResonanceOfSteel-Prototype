@@ -1,4 +1,4 @@
-// State records for the LogicBlocks state machine.
+// TODO Phase 2: migrate to LogicBlocks for serializable snapshots
 // All from Prototype Brief Section 5.
 namespace ResonanceOfSteel.Simulation.States
 {
@@ -20,7 +20,6 @@ namespace ResonanceOfSteel.Simulation.States
 
 	// ── Damage states ──────────────────────────────────────────────────
 	public record Staggered(int FramesLeft);
-	public record Fatigued;                   // Momentum at zero
 
 	// ── Terminal state ─────────────────────────────────────────────────
 	public record Deathblow;                  // Execution animation, no inputs accepted

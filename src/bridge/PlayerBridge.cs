@@ -25,6 +25,7 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public int FrameAdvantageOffset = 3;
 		[Export] public ArchetypeType Archetype = ArchetypeType.Longsword;
 		[Export] public HitboxManager ActiveHitboxManager;
+		[Export] public float FatigueRecoveryMultiplier = 1.5f;
 		// ── Movement constants ──────────────────────────────────────────
 		[Export] public float WalkSpeed = 4.0f;
 		[Export] public float RunSpeed = 7.0f;
@@ -299,7 +300,8 @@ namespace ResonanceOfSteel.Bridge
 			BaseComposureDamage: (Fixed64)(double)BaseComposureDamage,
 			FrameAdvantageThreshold: FrameAdvantageThreshold,
 			FrameAdvantageOffset: FrameAdvantageOffset,
-			ArmorTradeLethality: (Fixed64)(double)ArmorTradeLethality
+			ArmorTradeLethality: (Fixed64)(double)ArmorTradeLethality,
+			FatigueRecoveryMultiplier: (Fixed64)(double)FatigueRecoveryMultiplier
 		);
 	}
 }

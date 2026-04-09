@@ -2,48 +2,51 @@
 using Godot;
 using ResonanceOfSteel.Bridge;
 
-public partial class GameCoordinator : Node3D
+
+namespace ResonanceOfSteel.Scene
 {
-	[Export] public PlayerBridge Player1;
-	[Export] public PlayerBridge Player2;
-	[Export] public HitboxManager HitboxP1;
-	[Export] public HitboxManager HitboxP2;
-
-	public override void _Ready()
+	public partial class GameCoordinator : Node3D
 	{
-		// Suppress the console spam and allow P2 testing
-		RegisterPlayer2Inputs();
+		[Export] public PlayerBridge Player1;
+		[Export] public PlayerBridge Player2;
+		[Export] public HitboxManager HitboxP1;
+		[Export] public HitboxManager HitboxP2;
 
-		// Wire opponents
-		Player1.Opponent = Player2;
-		Player2.Opponent = Player1;
+		public override void _Ready()
+		{
+			// Suppress the console spam and allow P2 testing
+			RegisterPlayer2Inputs();
 
-		// Wire hitbox managers
-		HitboxP1.OwnerBridge = Player1;
-		HitboxP1.OpponentBridge = Player2;
+			// Wire opponents
+			Player1.Opponent = Player2;
+			Player2.Opponent = Player1;
 
-		// Give the players control over their respective hitbox managers
-		Player1.ActiveHitboxManager = HitboxP1;
-		Player2.ActiveHitboxManager = HitboxP2;
+			// Wire hitbox managers
+			HitboxP1.OwnerBridge = Player1;
+			HitboxP1.OpponentBridge = Player2;
 
-		HitboxP2.OwnerBridge = Player2;
-		HitboxP2.OpponentBridge = Player1;
-		GD.Print(HitboxP1 + " owner: " + HitboxP1.OwnerBridge + ", opponent: " + HitboxP1.OpponentBridge);
-		GD.Print(HitboxP2 + " owner: " + HitboxP2.OwnerBridge + ", opponent: " + HitboxP2.OpponentBridge);
+			// Give the players control over their respective hitbox managers
+			Player1.ActiveHitboxManager = HitboxP1;
+			Player2.ActiveHitboxManager = HitboxP2;
 
-		// Set player indices
-		Player1.PlayerIndex = 0;
-		Player2.PlayerIndex = 1;
+			HitboxP2.OwnerBridge = Player2;
+			HitboxP2.OpponentBridge = Player1;
+			GD.Print(HitboxP1 + " owner: " + HitboxP1.OwnerBridge + ", opponent: " + HitboxP1.OpponentBridge);
+			GD.Print(HitboxP2 + " owner: " + HitboxP2.OwnerBridge + ", opponent: " + HitboxP2.OpponentBridge);
 
-		// Position players facing each other
-		Player1.GlobalPosition = new Vector3(-3, 1, 0);
-		Player2.GlobalPosition = new Vector3(3, 1, 0);
-	}
+			// Set player indices
+			Player1.PlayerIndex = 0;
+			Player2.PlayerIndex = 1;
 
-	private void RegisterPlayer2Inputs()
-	{
-		// Define the P2 actions and some default testing keys
-		var p2Actions = new Godot.Collections.Dictionary<string, Key>
+			// Position players facing each other
+			Player1.GlobalPosition = new Vector3(-3, 1, 0);
+			Player2.GlobalPosition = new Vector3(3, 1, 0);
+		}
+
+		private void RegisterPlayer2Inputs()
+		{
+			// Define the P2 actions and some default testing keys
+			var p2Actions = new Godot.Collections.Dictionary<string, Key>
 		{
 			{ "attack_p2", Key.KpEnter },
 			{ "block_parry_p2", Key.KpSubtract },
@@ -59,18 +62,18 @@ public partial class GameCoordinator : Node3D
 			{ "move_up_p2", Key.Kp8 }
 		};
 
-		foreach (var kvp in p2Actions)
-		{
-			if (!InputMap.HasAction(kvp.Key))
+			foreach (var kvp in p2Actions)
 			{
-				InputMap.AddAction(kvp.Key);
+				if (!InputMap.HasAction(kvp.Key))
+				{
+					InputMap.AddAction(kvp.Key);
 
-				// Map the physical key so we can trigger the inputs
-				var inputEvent = new InputEventKey();
-				inputEvent.Keycode = kvp.Value;
-				InputMap.ActionAddEvent(kvp.Key, inputEvent);
+					// Map the physical key so we can trigger the inputs
+					var inputEvent = new InputEventKey();
+					inputEvent.Keycode = kvp.Value;
+					InputMap.ActionAddEvent(kvp.Key, inputEvent);
+				}
 			}
 		}
 	}
 }
-

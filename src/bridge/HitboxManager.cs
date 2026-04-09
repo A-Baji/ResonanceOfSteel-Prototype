@@ -119,33 +119,6 @@ namespace ResonanceOfSteel.Bridge
 			// Notify attacker that hit landed.
 			OwnerBridge.NotifyHitLanded(mults.V, mults.C, isBlocked);
 		}
-
-		// Returns the hitbox shape for the current attack tier.
-		// Shapes from Prototype Brief Section 7.1.
-		// In Phase 6, this will be extended to support both archetypes.
-		private Shape3D GetHitboxShape(AttackTier tier)
-		{
-			return tier switch
-			{
-				AttackTier.Light => new SphereShape3D { Radius = 0.4f },
-				AttackTier.Standard => new CapsuleShape3D { Height = 1.2f, Radius = 0.2f },
-				AttackTier.Heavy => new CapsuleShape3D { Height = 1.0f, Radius = 0.25f },
-				AttackTier.Super => new BoxShape3D { Size = new Vector3(1.8f, 0.2f, 0.2f) },
-				_ => new SphereShape3D { Radius = 0.4f },
-			};
-		}
-
-		private (float v, float c) GetDamageMultipliers(AttackTier tier)
-		{
-			return tier switch
-			{
-				AttackTier.Light => (DamageMultipliers.Flick.V, DamageMultipliers.Flick.C),
-				AttackTier.Standard => (DamageMultipliers.CrossCut.V, DamageMultipliers.CrossCut.C),
-				AttackTier.Heavy => (DamageMultipliers.Overhead.V, DamageMultipliers.Overhead.C),
-				AttackTier.Super => (DamageMultipliers.Lunge.V, DamageMultipliers.Lunge.C),
-				_ => (1.0f, 1.0f),
-			};
-		}
 	}
 }
 
