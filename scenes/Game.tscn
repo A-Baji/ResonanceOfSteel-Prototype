@@ -35,6 +35,7 @@ environment = SubResource("Environment_kiw3p")
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="." unique_id=735515130]
 transform = Transform3D(1, 0, 0, 0, 0.70710677, 0.70710677, 0, -0.70710677, 0.70710677, 0, 0, 0)
+shadow_enabled = true
 
 [node name="StageBase" parent="." unique_id=1610961939 instance=ExtResource("2_kiw3p")]
 

@@ -41,7 +41,7 @@ namespace ResonanceOfSteel.Bridge
 			Player2.Connect(PlayerBridge.SignalName.DeathblowTriggered,
 				new Callable(this, nameof(OnPlayer2Deathblow)));
 
-			StartRound();
+			CallDeferred(nameof(StartRound));
 		}
 
 		public override void _Process(double delta)

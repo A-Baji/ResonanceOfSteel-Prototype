@@ -32,6 +32,11 @@ namespace ResonanceOfSteel.Presentation
 		// Brief Section 11.2: Momentum UI visibility toggle
 		[Export] public bool ShowMomentumToOpponent = false;
 
+		private Tween _p1VitTween, _p1CompTween, _p1MomTween;
+		private Tween _p2VitTween, _p2CompTween, _p2MomTween;
+
+		private System.Collections.Generic.Dictionary<ProgressBar, float> _barTargets = new();
+
 		public override void _Ready()
 		{
 			if (RoundMgr != null)
@@ -50,20 +55,36 @@ namespace ResonanceOfSteel.Presentation
 		{
 			if (Player1 == null || Player2 == null) return;
 
-			// Update bars every frame.
-			P1VitalityBar.Value = Player1.GetVitality();
-			P1ComposureBar.Value = Player1.GetComposure();
-			P1MomentumBar.Value = Player1.GetMomentum();
+			// Use AnimateBar instead of direct assignment to get the smooth tweening effect.
+			// The helper already checks if the value changed before starting a new tween.
+			AnimateBar(ref _p1VitTween, P1VitalityBar, Player1.GetVitality());
+			AnimateBar(ref _p1CompTween, P1ComposureBar, Player1.GetComposure());
+			AnimateBar(ref _p1MomTween, P1MomentumBar, Player1.GetMomentum());
 			P1StacksLabel.Text = $"Stacks: {Player1.GetFrameAdvantageStacks()}";
 
-			P2VitalityBar.Value = Player2.GetVitality();
-			P2ComposureBar.Value = Player2.GetComposure();
-			P2MomentumBar.Value = Player2.GetMomentum();
+			AnimateBar(ref _p2VitTween, P2VitalityBar, Player2.GetVitality());
+			AnimateBar(ref _p2CompTween, P2ComposureBar, Player2.GetComposure());
+			AnimateBar(ref _p2MomTween, P2MomentumBar, Player2.GetMomentum());
 			P2StacksLabel.Text = $"Stacks: {Player2.GetFrameAdvantageStacks()}";
+		}
 
-			// Momentum visibility: each player sees their own, not opponent's.
-			// In split-screen, both bars are visible to both players in this simple setup.
-			// Full viewport-specific visibility requires per-viewport CanvasLayer (future).
+		private void AnimateBar(ref Tween tween, ProgressBar bar, float newValue)
+		{
+			// Initialize target if not present
+			if (!_barTargets.ContainsKey(bar)) _barTargets[bar] = (float)bar.Value;
+
+			// ONLY start a new tween if the PLAYER'S actual value changed, 
+			// not if the bar's visual value is different.
+			if (Mathf.IsEqualApprox(_barTargets[bar], newValue)) return;
+
+			// Update the record of what we are aiming for
+			_barTargets[bar] = newValue;
+
+			if (tween != null && tween.IsValid()) tween.Kill();
+
+			tween = CreateTween();
+			tween.SetTrans(Tween.TransitionType.Quad).SetEase(Tween.EaseType.Out);
+			tween.TweenProperty(bar, "value", newValue, 0.25f);
 		}
 
 		private void OnLivesChanged(int p1Lives, int p2Lives)
