@@ -1,0 +1,104 @@
+[gd_scene format=3 uid="uid://i58ujrrstpcp"]
+
+[ext_resource type="Script" uid="uid://bs3uh8xh4x441" path="res://src/presentation/HUD.cs" id="1_wfueu"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_y5umd"]
+bg_color = Color(1, 0.22714862, 0.26833797, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_wfueu"]
+bg_color = Color(0.8865893, 0.40899894, 0, 1)
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_f1f40"]
+bg_color = Color(0, 0.6782845, 0.36695927, 1)
+
+[node name="Hud" type="CanvasLayer" unique_id=772036742 node_paths=PackedStringArray("P1VitalityBar", "P1ComposureBar", "P1MomentumBar", "P1StacksLabel", "P2VitalityBar", "P2ComposureBar", "P2MomentumBar", "P2StacksLabel", "P1LivesLabel", "P2LivesLabel", "TimerLabel")]
+script = ExtResource("1_wfueu")
+P1VitalityBar = NodePath("P1Hud/P1VitalityBar")
+P1ComposureBar = NodePath("P1Hud/P1ComposureBar")
+P1MomentumBar = NodePath("P1Hud/P1MomentumBar")
+P1StacksLabel = NodePath("P1Hud/HBoxContainer/P1StacksLabel")
+P2VitalityBar = NodePath("P2Hud/P2VitalityBar")
+P2ComposureBar = NodePath("P2Hud/P2ComposureBar")
+P2MomentumBar = NodePath("P2Hud/P2MomentumBar")
+P2StacksLabel = NodePath("P2Hud/HBoxContainer/P2StacksLabel")
+P1LivesLabel = NodePath("HBoxContainer/P1LivesLabel")
+P2LivesLabel = NodePath("HBoxContainer/P2LivesLabel")
+TimerLabel = NodePath("HBoxContainer/TimerLabel")
+
+[node name="P1Hud" type="VBoxContainer" parent="." unique_id=2122658685]
+offset_left = 20.0
+offset_top = 20.0
+offset_right = 320.0
+offset_bottom = 220.0
+
+[node name="P1VitalityBar" type="ProgressBar" parent="P1Hud" unique_id=1733444474]
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_y5umd")
+max_value = 1.0
+
+[node name="P1ComposureBar" type="ProgressBar" parent="P1Hud" unique_id=1222370024]
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_wfueu")
+max_value = 1.0
+
+[node name="P1MomentumBar" type="ProgressBar" parent="P1Hud" unique_id=844737992]
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_f1f40")
+max_value = 8.0
+
+[node name="HBoxContainer" type="HBoxContainer" parent="P1Hud" unique_id=1171394559]
+layout_mode = 2
+
+[node name="P1StacksLabel" type="Label" parent="P1Hud/HBoxContainer" unique_id=311602899]
+layout_mode = 2
+
+[node name="P2Hud" type="VBoxContainer" parent="." unique_id=1088323287]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -300.0
+offset_bottom = 200.0
+grow_horizontal = 0
+
+[node name="P2VitalityBar" type="ProgressBar" parent="P2Hud" unique_id=1366016988]
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_y5umd")
+max_value = 1.0
+fill_mode = 1
+
+[node name="P2ComposureBar" type="ProgressBar" parent="P2Hud" unique_id=970294081]
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_wfueu")
+max_value = 1.0
+fill_mode = 1
+
+[node name="P2MomentumBar" type="ProgressBar" parent="P2Hud" unique_id=1324442245]
+layout_mode = 2
+theme_override_styles/fill = SubResource("StyleBoxFlat_f1f40")
+max_value = 8.0
+fill_mode = 1
+
+[node name="HBoxContainer" type="HBoxContainer" parent="P2Hud" unique_id=536076038]
+layout_direction = 3
+layout_mode = 2
+
+[node name="P2StacksLabel" type="Label" parent="P2Hud/HBoxContainer" unique_id=1578857084]
+layout_mode = 2
+
+[node name="HBoxContainer" type="HBoxContainer" parent="." unique_id=1514330666]
+anchors_preset = 5
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -20.0
+offset_right = 20.0
+offset_bottom = 40.0
+grow_horizontal = 2
+
+[node name="P1LivesLabel" type="Label" parent="HBoxContainer" unique_id=1346459310]
+layout_mode = 2
+
+[node name="TimerLabel" type="Label" parent="HBoxContainer" unique_id=1230381257]
+layout_mode = 2
+
+[node name="P2LivesLabel" type="Label" parent="HBoxContainer" unique_id=1151030554]
+layout_mode = 2

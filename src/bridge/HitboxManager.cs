@@ -81,6 +81,7 @@ namespace ResonanceOfSteel.Bridge
 			string oppState = OpponentBridge.GetStateName();
 			bool isBlocked = oppState == "Blocking" || oppState == "Parrying";
 			bool isParried = oppState == "Parrying";
+			bool isDeathblow = oppState == "Deathblow";
 			bool attackerAttemptingShatter = OwnerBridge.IsInShatterWindow();
 
 			if (isParried)
@@ -110,6 +111,16 @@ namespace ResonanceOfSteel.Bridge
 				// Momentum is drained and a -4 frame Recovery disadvantage is applied.
 				OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: true);
 				OwnerBridge.NotifyShatterWhiff();
+				return;
+			}
+
+			if (isDeathblow)
+			{
+				// Deathblow: defender is already in Deathblow state, so this hit finishes them off.
+				// Apply the hit as normal to trigger the defender's death sequence, but also notify
+				// the attacker that they landed a Deathblow for UI purposes.
+				OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: false);
+				OwnerBridge.NotifyDeathblowTriggered();
 				return;
 			}
 

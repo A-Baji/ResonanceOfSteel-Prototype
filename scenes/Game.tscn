@@ -3,9 +3,9 @@
 [ext_resource type="Script" uid="uid://f6f3bul7hs5g" path="res://src/scene/GameCoordinator.cs" id="1_18ig4"]
 [ext_resource type="Script" uid="uid://ccjk6hno3t7yu" path="res://src/bridge/PlayerBridge.cs" id="2_7s5hy"]
 [ext_resource type="Script" uid="uid://b8oei3ahu445h" path="res://src/bridge/HitboxManager.cs" id="3_xs4ih"]
-[ext_resource type="Script" uid="uid://bs3uh8xh4x441" path="res://src/presentation/HUD.cs" id="4_6ytau"]
 [ext_resource type="Script" uid="uid://c8avj4fnq5xu0" path="res://src/scene/CameraController.cs" id="4_s0nni"]
 [ext_resource type="Script" uid="uid://chd10bf4suuy2" path="res://src/bridge/RoundManager.cs" id="6_aug50"]
+[ext_resource type="PackedScene" uid="uid://i58ujrrstpcp" path="res://scenes/Hud.tscn" id="6_kiw3p"]
 
 [sub_resource type="Environment" id="Environment_rwgxs"]
 
@@ -114,25 +114,12 @@ spring_length = 5.0
 
 [node name="RemoteTransform" type="RemoteTransform3D" parent="Player2/CameraPivot/SpringArm" unique_id=1614934524]
 
-[node name="CanvasLayer" type="CanvasLayer" parent="." unique_id=1406802145]
-
-[node name="Label" type="Label" parent="CanvasLayer" unique_id=2121219257 node_paths=PackedStringArray("TargetPlayer")]
-offset_right = 40.0
-offset_bottom = 23.0
-script = ExtResource("4_6ytau")
-TargetPlayer = NodePath("../../Player1")
-
-[node name="Label2" type="Label" parent="CanvasLayer" unique_id=1897217221 node_paths=PackedStringArray("TargetPlayer")]
-anchors_preset = 1
-anchor_left = 1.0
-anchor_right = 1.0
-offset_left = -40.0
-offset_bottom = 23.0
-grow_horizontal = 0
-script = ExtResource("4_6ytau")
-TargetPlayer = NodePath("../../Player2")
-
 [node name="RoundManager" type="Node" parent="." unique_id=1212088111 node_paths=PackedStringArray("Player1", "Player2")]
 script = ExtResource("6_aug50")
 Player1 = NodePath("../Player1")
 Player2 = NodePath("../Player2")
+
+[node name="Hud" parent="." unique_id=772036742 node_paths=PackedStringArray("Player1", "Player2", "RoundMgr") instance=ExtResource("6_kiw3p")]
+Player1 = NodePath("../Player1")
+Player2 = NodePath("../Player2")
+RoundMgr = NodePath("../RoundManager")

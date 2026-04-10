@@ -262,6 +262,11 @@ namespace ResonanceOfSteel.Bridge
 			EmitSignal(SignalName.ParrySuccess);
 		}
 
+		public void NotifyDeathblowTriggered()
+		{
+			_sim.OnDeathblowTriggered();
+		}
+
 		// Returns true if block was pressed within the Shatter contact window.
 		public bool IsInShatterWindow() => _sim.IsInShatterWindow();
 
@@ -278,6 +283,7 @@ namespace ResonanceOfSteel.Bridge
 		public void FullReset(Vector3 spawnPosition)
 		{
 			_sim.Economy.FullReset();
+			_sim.ResetState();
 			_buffer.Clear();
 			GlobalPosition = spawnPosition;
 			Velocity = Vector3.Zero;

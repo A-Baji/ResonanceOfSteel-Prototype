@@ -22,6 +22,9 @@ namespace ResonanceOfSteel.Bridge
 		private float _timeRemaining;
 		private bool _roundActive;
 
+		public int P1Lives => _p1Lives;
+		public int P2Lives => _p2Lives;
+
 		// Signals for the UI to display.
 		[Signal] public delegate void LivesChangedEventHandler(int p1Lives, int p2Lives);
 		[Signal] public delegate void TimerChangedEventHandler(float seconds);
@@ -61,19 +64,22 @@ namespace ResonanceOfSteel.Bridge
 			Player2.FullReset(Player2SpawnPos);
 		}
 
-		// Called when Player 1 receives a Deathblow (Player 2 landed it).
+		// Called when Player 1 lands a Deathblow (Player 2 loses a life).
 		private void OnPlayer1Deathblow()
 		{
+			GD.Print("Player 1 Deathblow triggered!");
 			_roundActive = false;
-			_p1Lives--;
+			_p2Lives--;
 			EmitSignal(SignalName.LivesChanged, _p1Lives, _p2Lives);
 			CheckMatchEnd();
 		}
 
+		// Called when Player 2 lands a Deathblow (Player 1 loses a life).
 		private void OnPlayer2Deathblow()
 		{
+			GD.Print("Player 2 Deathblow triggered!");
 			_roundActive = false;
-			_p2Lives--;
+			_p1Lives--;
 			EmitSignal(SignalName.LivesChanged, _p1Lives, _p2Lives);
 			CheckMatchEnd();
 		}

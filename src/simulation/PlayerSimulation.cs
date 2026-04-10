@@ -263,6 +263,13 @@ namespace ResonanceOfSteel.Simulation
 			LastEvent = CombatEvent.ParrySuccess;
 		}
 
+		// Called on Deathblow execution
+		public void OnDeathblowTriggered()
+		{
+			LastEvent = CombatEvent.DeathblowTriggered;
+			_state = new Deathblow();
+		}
+
 		// Called on a Clash (both attacks same tier simultaneously).
 		public void OnClash()
 		{
@@ -328,6 +335,14 @@ namespace ResonanceOfSteel.Simulation
 
 		// Returns the current state type name (for debugging and UI).
 		public string GetStateName() => _state?.GetType().Name ?? "Unknown";
+
+		// Called by Bridge to reset simulation state between rounds.
+		public void ResetState()
+		{
+			_state = new Idle();
+			_blockPressedFramesAgo = int.MaxValue / 2;
+			_shatterWhiffRecoveryPenalty = false;
+		}
 	}
 }
 
