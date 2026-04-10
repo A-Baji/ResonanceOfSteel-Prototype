@@ -116,6 +116,7 @@ namespace ResonanceOfSteel.Bridge
 			// 6. Apply movement from simulation state.
 			ApplyMovement(input, delta);
 			FaceOpponent(delta);
+			ApplyBoundaryPushback();
 
 			// 7. DETERMINISTIC EXECUTION: Command the hitbox check right now
 			if (ActiveHitboxManager != null)
@@ -193,6 +194,26 @@ namespace ResonanceOfSteel.Bridge
 			}
 
 			MoveAndSlide();
+		}
+
+		private void ApplyBoundaryPushback()
+		{
+			for (int i = 0; i < GetSlideCollisionCount(); i++)
+			{
+				var collision = GetSlideCollision(i);
+				var collider = collision.GetCollider() as Node;
+
+				if (collider != null && collider.IsInGroup("boundary"))
+				{
+					// Apply a normal-based nudge to prevent wall-clinging
+					// Using the collision normal ensures we push directly away from the wall face
+					Velocity += collision.GetNormal() * 5.0f;
+
+					// Re-run MoveAndSlide briefly to apply the nudge immediately
+					MoveAndSlide();
+					break;
+				}
+			}
 		}
 
 		// -- Always face opponent -──────────────────────────────────────

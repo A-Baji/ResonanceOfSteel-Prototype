@@ -1,0 +1,52 @@
+[gd_scene format=3 uid="uid://cv5dabhhartlo"]
+
+[ext_resource type="Script" uid="uid://tohbo0c72ptl" path="res://src/bridge/StageController.cs" id="1_wxdfq"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_30gp0"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_wxdfq"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_6qjhm"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_1h27g"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_go16m"]
+
+[sub_resource type="BoxShape3D" id="BoxShape3D_ffqx8"]
+
+[node name="StageBase" type="Node3D" unique_id=1610961939 node_paths=PackedStringArray("Floor", "FloorCollision", "NorthWall", "SouthWall", "EastWall", "WestWall")]
+script = ExtResource("1_wxdfq")
+Floor = NodePath("FloorMesh")
+FloorCollision = NodePath("FloorPhysics/CollisionShape3D")
+NorthWall = NodePath("NorthWall")
+SouthWall = NodePath("SouthWall")
+EastWall = NodePath("EastWall")
+WestWall = NodePath("WestWall")
+
+[node name="FloorMesh" type="MeshInstance3D" parent="." unique_id=546212208]
+mesh = SubResource("PlaneMesh_30gp0")
+
+[node name="FloorPhysics" type="StaticBody3D" parent="." unique_id=412983222]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="FloorPhysics" unique_id=943778642]
+shape = SubResource("BoxShape3D_wxdfq")
+
+[node name="NorthWall" type="StaticBody3D" parent="." unique_id=1258829377 groups=["boundary"]]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="NorthWall" unique_id=503065316]
+shape = SubResource("BoxShape3D_6qjhm")
+
+[node name="SouthWall" type="StaticBody3D" parent="." unique_id=1867200569 groups=["boundary"]]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="SouthWall" unique_id=2001237140]
+shape = SubResource("BoxShape3D_1h27g")
+
+[node name="EastWall" type="StaticBody3D" parent="." unique_id=451211915 groups=["boundary"]]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="EastWall" unique_id=1726083079]
+shape = SubResource("BoxShape3D_go16m")
+
+[node name="WestWall" type="StaticBody3D" parent="." unique_id=1306384580 groups=["boundary"]]
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="WestWall" unique_id=1945265441]
+shape = SubResource("BoxShape3D_ffqx8")

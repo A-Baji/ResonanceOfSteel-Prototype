@@ -23,6 +23,10 @@ project/assembly_name="ResonanceOfSteelPrototype"
 
 enabled=PackedStringArray()
 
+[global_group]
+
+boundary="Stage boundary"
+
 [input]
 
 attack={
