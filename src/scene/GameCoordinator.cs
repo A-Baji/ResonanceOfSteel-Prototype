@@ -9,8 +9,8 @@ namespace ResonanceOfSteel.Scene
 	{
 		[Export] public PlayerBridge Player1;
 		[Export] public PlayerBridge Player2;
-		[Export] public HitboxManager HitboxP1;
-		[Export] public HitboxManager HitboxP2;
+		private HitboxManager _hitboxP1 => Player1.GetNode<HitboxManager>("HitboxManager");
+		private HitboxManager _hitboxP2 => Player2.GetNode<HitboxManager>("HitboxManager");
 
 		public override void _Ready()
 		{
@@ -22,17 +22,17 @@ namespace ResonanceOfSteel.Scene
 			Player2.Opponent = Player1;
 
 			// Wire hitbox managers
-			HitboxP1.OwnerBridge = Player1;
-			HitboxP1.OpponentBridge = Player2;
+			_hitboxP1.OwnerBridge = Player1;
+			_hitboxP1.OpponentBridge = Player2;
 
 			// Give the players control over their respective hitbox managers
-			Player1.ActiveHitboxManager = HitboxP1;
-			Player2.ActiveHitboxManager = HitboxP2;
+			Player1.ActiveHitboxManager = _hitboxP1;
+			Player2.ActiveHitboxManager = _hitboxP2;
 
-			HitboxP2.OwnerBridge = Player2;
-			HitboxP2.OpponentBridge = Player1;
-			GD.Print(HitboxP1 + " owner: " + HitboxP1.OwnerBridge + ", opponent: " + HitboxP1.OpponentBridge);
-			GD.Print(HitboxP2 + " owner: " + HitboxP2.OwnerBridge + ", opponent: " + HitboxP2.OpponentBridge);
+			_hitboxP2.OwnerBridge = Player2;
+			_hitboxP2.OpponentBridge = Player1;
+			GD.Print(_hitboxP1 + " owner: " + _hitboxP1.OwnerBridge + ", opponent: " + _hitboxP1.OpponentBridge);
+			GD.Print(_hitboxP2 + " owner: " + _hitboxP2.OwnerBridge + ", opponent: " + _hitboxP2.OpponentBridge);
 
 			// Set player indices
 			Player1.PlayerIndex = 0;

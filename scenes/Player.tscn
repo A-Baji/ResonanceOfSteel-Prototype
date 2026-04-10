@@ -1,0 +1,41 @@
+[gd_scene format=3 uid="uid://cjyjw11mxcovv"]
+
+[ext_resource type="Script" uid="uid://ccjk6hno3t7yu" path="res://src/bridge/PlayerBridge.cs" id="1_3li8b"]
+[ext_resource type="Script" uid="uid://b8oei3ahu445h" path="res://src/bridge/HitboxManager.cs" id="2_mdl7e"]
+[ext_resource type="Script" uid="uid://c8avj4fnq5xu0" path="res://src/scene/CameraController.cs" id="3_qu4a1"]
+
+[sub_resource type="CapsuleMesh" id="CapsuleMesh_71j4m"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_qfnet"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_i7141"]
+
+[node name="Player" type="CharacterBody3D" unique_id=1547398993 node_paths=PackedStringArray("ActiveHitboxManager", "CameraPivot")]
+script = ExtResource("1_3li8b")
+ActiveHitboxManager = NodePath("HitboxManager")
+CameraPivot = NodePath("CameraPivot")
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=573389450]
+mesh = SubResource("CapsuleMesh_71j4m")
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="." unique_id=1012621402]
+shape = SubResource("CapsuleShape3D_qfnet")
+
+[node name="Hurtbox" type="Area3D" parent="." unique_id=369111622]
+collision_layer = 4
+collision_mask = 0
+
+[node name="CollisionShape3D" type="CollisionShape3D" parent="Hurtbox" unique_id=86579902]
+shape = SubResource("CapsuleShape3D_i7141")
+
+[node name="HitboxManager" type="Node3D" parent="." unique_id=815201589]
+script = ExtResource("2_mdl7e")
+
+[node name="CameraPivot" type="Node3D" parent="." unique_id=1151023568]
+script = ExtResource("3_qu4a1")
+
+[node name="SpringArm" type="SpringArm3D" parent="CameraPivot" unique_id=1513688344]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 2, 0)
+spring_length = 5.0
+
+[node name="RemoteTransform" type="RemoteTransform3D" parent="CameraPivot/SpringArm" unique_id=25412076]
