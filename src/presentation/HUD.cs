@@ -2,11 +2,12 @@
 // Updates HUD elements each frame from PlayerBridge accessor values.
 // In the Presentation Layer: reads state, never writes it.
 using Godot;
+using System.Collections.Generic;
 using ResonanceOfSteel.Bridge;
 
 namespace ResonanceOfSteel.Presentation
 {
-	public partial class HUD : CanvasLayer
+	public sealed partial class HUD : CanvasLayer
 	{
 		[Export] public PlayerBridge Player1;
 		[Export] public PlayerBridge Player2;
@@ -29,22 +30,18 @@ namespace ResonanceOfSteel.Presentation
 		[Export] public Label P2LivesLabel;
 		[Export] public Label TimerLabel;
 
-		// Brief Section 11.2: Momentum UI visibility toggle
-		[Export] public bool ShowMomentumToOpponent = false;
-
 		private Tween _p1VitTween, _p1CompTween, _p1MomTween;
 		private Tween _p2VitTween, _p2CompTween, _p2MomTween;
 
-		private System.Collections.Generic.Dictionary<ProgressBar, float> _barTargets = new();
+		private readonly Dictionary<ProgressBar, float> _barTargets = new();
+		private int _lastP1Stacks = -1, _lastP2Stacks = -1;
 
 		public override void _Ready()
 		{
 			if (RoundMgr != null)
 			{
-				RoundMgr.Connect(RoundManager.SignalName.LivesChanged,
-					new Callable(this, nameof(OnLivesChanged)));
-				RoundMgr.Connect(RoundManager.SignalName.TimerChanged,
-					new Callable(this, nameof(OnTimerChanged)));
+				RoundMgr.LivesChanged += OnLivesChanged;
+				RoundMgr.TimerChanged += OnTimerChanged;
 
 				P1LivesLabel.Text = $"P1: {RoundMgr.P1Lives}";
 				P2LivesLabel.Text = $"P2: {RoundMgr.P2Lives}";
@@ -60,22 +57,35 @@ namespace ResonanceOfSteel.Presentation
 			AnimateBar(ref _p1VitTween, P1VitalityBar, Player1.GetVitality());
 			AnimateBar(ref _p1CompTween, P1ComposureBar, Player1.GetComposure());
 			AnimateBar(ref _p1MomTween, P1MomentumBar, Player1.GetMomentum());
-			P1StacksLabel.Text = $"Stacks: {Player1.GetFrameAdvantageStacks()}";
+
+			int p1Stacks = Player1.GetFrameAdvantageStacks();
+			if (p1Stacks != _lastP1Stacks)
+			{
+				P1StacksLabel.Text = $"Stacks: {p1Stacks}";
+				_lastP1Stacks = p1Stacks;
+			}
 
 			AnimateBar(ref _p2VitTween, P2VitalityBar, Player2.GetVitality());
 			AnimateBar(ref _p2CompTween, P2ComposureBar, Player2.GetComposure());
 			AnimateBar(ref _p2MomTween, P2MomentumBar, Player2.GetMomentum());
-			P2StacksLabel.Text = $"Stacks: {Player2.GetFrameAdvantageStacks()}";
+
+			int p2Stacks = Player2.GetFrameAdvantageStacks();
+			if (p2Stacks != _lastP2Stacks)
+			{
+				P2StacksLabel.Text = $"Stacks: {p2Stacks}";
+				_lastP2Stacks = p2Stacks;
+			}
 		}
 
 		private void AnimateBar(ref Tween tween, ProgressBar bar, float newValue)
 		{
-			// Initialize target if not present
-			if (!_barTargets.ContainsKey(bar)) _barTargets[bar] = (float)bar.Value;
+			if (!_barTargets.TryGetValue(bar, out float current))
+			{
+				current = (float)bar.Value;
+				_barTargets[bar] = current;
+			}
 
-			// ONLY start a new tween if the PLAYER'S actual value changed, 
-			// not if the bar's visual value is different.
-			if (Mathf.IsEqualApprox(_barTargets[bar], newValue)) return;
+			if (Mathf.IsEqualApprox(current, newValue)) return;
 
 			// Update the record of what we are aiming for
 			_barTargets[bar] = newValue;

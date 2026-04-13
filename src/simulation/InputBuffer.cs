@@ -5,12 +5,27 @@ using System.Collections.Generic;
 
 namespace ResonanceOfSteel.Simulation
 {
-	public class InputBuffer
+	public sealed class InputBuffer
 	{
-		private const int DefaultTTL = 3; // 3 frames at 60fps (Brief Section 4.2)
+		private readonly int _ttl;
+
+		private static readonly PlayerInputAction[] Priority =
+		{
+			PlayerInputAction.BlockParry,
+			PlayerInputAction.Attack,
+			PlayerInputAction.Dodge,
+			PlayerInputAction.Jump,
+		};
 
 		// Each entry: (action, frames remaining)
 		private readonly List<(PlayerInputAction action, int ttl)> _queue = new();
+
+		public int Count => _queue.Count;
+
+		public InputBuffer(int ttl)
+		{
+			_ttl = ttl;
+		}
 
 		// Add an action to the buffer with full TTL.
 		public void Add(PlayerInputAction action)
@@ -18,11 +33,11 @@ namespace ResonanceOfSteel.Simulation
 			// Don't add duplicates if the same action is already buffered.
 			foreach (var (a, _) in _queue)
 				if (a == action) return;
-			_queue.Add((action, DefaultTTL));
+			_queue.Add((action, _ttl));
 		}
 
 		// Decrement all TTLs. Remove expired entries.
-		// Called once per Tick() before consumption.
+		// Called once per Tick() after consumption.
 		public void Tick()
 		{
 			for (int i = _queue.Count - 1; i >= 0; i--)
@@ -36,19 +51,10 @@ namespace ResonanceOfSteel.Simulation
 		}
 
 		// Consume the highest-priority buffered action.
-		// Priority from Brief Section 4.2: block_parry > attack > dodge > jump > run
+		// Priority from Brief Section 4.2: block_parry > attack > dodge > jump
 		public PlayerInputAction Consume()
 		{
-			var priority = new[]
-			{
-				PlayerInputAction.BlockParry,
-				PlayerInputAction.Attack,
-				PlayerInputAction.Dodge,
-				PlayerInputAction.Jump,
-				PlayerInputAction.Run,
-			};
-
-			foreach (var p in priority)
+			foreach (var p in Priority)
 				for (int i = 0; i < _queue.Count; i++)
 					if (_queue[i].action == p)
 					{
@@ -59,7 +65,6 @@ namespace ResonanceOfSteel.Simulation
 			return PlayerInputAction.None;
 		}
 
-		public bool HasAny() => _queue.Count > 0;
 		public void Clear() => _queue.Clear();
 	}
 }

@@ -1,0 +1,670 @@
+# Resonance of Steel — Developer Guide
+
+> This document describes the architecture, code logic, and file purposes for the Resonance of Steel prototype. It is the developer-facing complement to `CLAUDE.md` (the AI agent source of truth). Keep this file up to date when code changes occur.
+
+---
+
+## 1. Architecture Overview
+
+The codebase uses a **Simulation-Observer** pattern with three strict layers. Dependencies flow inward only — outer layers may reference inner layers, but never the reverse.
+
+```
+┌─────────────────────────────────────────────┐
+│         Presentation Layer (Observer)        │
+│   Reads Bridge state. Never writes.         │
+├─────────────────────────────────────────────┤
+│            Bridge Layer (Conduit)            │
+│   Polls input → calls Tick() → applies      │
+│   physics → emits signals.                  │
+│   Contains ZERO combat logic.               │
+├─────────────────────────────────────────────┤
+│        Simulation Layer (Pure C#)           │
+│   NO Godot imports. Fixed64 math only.      │
+│   Deterministic. Serializable.              │
+└─────────────────────────────────────────────┘
+```
+
+### Why This Split
+
+The simulation layer must be completely Godot-independent to support Phase 2 rollback netcode. Rollback requires:
+1. Serializing the full game state to a byte array (snapshot)
+2. Restoring a previous snapshot
+3. Re-simulating N frames forward with corrected inputs
+
+If any simulation state lived inside Godot Nodes, serialization/restore would require engine-level workarounds. The pure-C# simulation avoids this entirely.
+
+---
+
+## 2. Simulation Layer (`src/simulation/`)
+
+All files in this directory are **pure C#** — no `using Godot` permitted. All numeric combat math uses `Fixed64` from FixedMathSharp for determinism (no `float`/`double`).
+
+### PlayerSimulation.cs — Core State Machine
+
+The central class. Owns all combat state for one player. Updated exactly once per physics frame via `Tick(PlayerInput)`.
+
+**Key responsibilities:**
+- State machine dispatch (`ProcessState` → per-state handlers)
+- Input buffer management (enqueue → consume → age)
+- Shatter window tracking (frame counter since last block press)
+- Combat event handlers (called by Bridge after hit resolution)
+- Per-tick output flags (`HitboxActive`, `ArmorActive`, `CurrentTier`, `LastEvent`)
+
+**State machine pattern:** Uses `private object _state` with C# record types (`Idle`, `Moving`, `Coil`, `Swing`, etc.) and pattern matching in a `switch` expression. Each state handler returns the next state. Frame-counted states use `record with { FramesLeft = framesLeft }` for immutable updates.
+
+> **Phase 2 note:** The `object` + `switch` pattern will be replaced by Chickensoft LogicBlocks (already imported as NuGet package) for compile-time exhaustiveness, hierarchical states, and native serialization.
+
+**Tick execution order:**
+1. Reset per-tick outputs
+2. Sync position from Bridge
+3. Track Shatter window (block press recency)
+4. Composure recovery tick
+5. Frame Advantage Stack decay tick
+6. Right-of-Way Momentum generation (if moving toward opponent within 60° cone, in Idle/Moving/Blocking)
+7. Enqueue new inputs into buffer
+8. Consume highest-priority buffered input (only in Idle/Moving — inputs stay in buffer during action-locked states)
+9. Age buffer entries (decrement TTLs, remove expired)
+10. Dispatch to state-specific processor
+
+**Actionable states:** `Idle` and `Moving` share `ProcessActionableInput()` which handles all input types (block/attack/dodge/jump/held-block). This prevents input drops by checking actions before movement fallback.
+
+**Action commitment:** All states except Idle, Moving, and Blocking are action-locked. During locked states, the input buffer does NOT consume entries — inputs remain buffered and expire via TTL. This means early inputs pressed near the end of an animation are preserved and consumed when the player returns to an actionable state. Recovery no longer accepts block-cancel.
+
+### PlayerStates.cs — State Records
+
+Defines all state types in `ResonanceOfSteel.Simulation.States`:
+
+| Record | Fields | Notes |
+|--------|--------|-------|
+| `Idle` | — | Default grounded state |
+| `Moving` | `IsRunning` | Walking or running |
+| `Coil` | `Tier`, `FramesLeft` | Attack wind-up |
+| `Swing` | `Tier`, `FramesLeft` | Active hitbox phase |
+| `Recovery` | `FramesLeft`, `Tier` | Post-swing cooldown |
+| `Blocking` | — | Standard block (held) |
+| `Parrying` | `FramesLeft` | Active parry window |
+| `Dodging` | `StartupLeft`, `ActiveLeft`, `RecoveryLeft` | Three-phase evasion (startup→active→recovery) |
+| `Jumping` | `StartupLeft`, `ActiveLeft`, `RecoveryLeft` | Three-phase jump (startup→active→recovery, ground check during active) |
+| `Staggered` | `FramesLeft` | Hit stun |
+| `Deathblow` | — | Terminal execution state |
+
+### EconomyHandler.cs — Resource Management
+
+Manages the three combat resources:
+- **Momentum** (0–8): Hidden resource. Costs: Parry 0.5, Dodge 1.5, Jump 1.0, Shatter 3.0. Generated by walking/running toward opponent and landing hits. Dodge and Jump are **always available** regardless of Momentum — insufficient Momentum degrades evasion frames (more startup, fewer active) rather than blocking the action.
+- **Composure** (0–1): Deathblow gauge. Sekiro-inspired recovery: paused for `ComposureRecoveryCooldownFrames` (90 = 1.5s) after composure damage, then recovers at `B_rate × V²` (quadratic vitality scaling). Recovery stops at Terminal vitality.
+- **Vitality** (0–1): Lethality regulator. Reaching 0 makes deathblow inevitable.
+
+Also tracks **Frame Advantage Stacks** (integer, no cap). +1 per Perfect Parry. Each stack provides `FrameAdvantageOffset` (1 frame) of Coil reduction on the next counter-attack, consuming all stacks. Reset on: non-parried hit received (blocked or unblocked). Gradual decay: after `StackDecayDelayFrames` (180 = 3s) of no parry, stacks lose 1 every `StackDecayIntervalFrames` (60 = 1s).
+
+**Derived states:**
+- `IsFatigued`: Momentum ≤ 0 — disables Parry and Tier 3 armor; degrades Dodge/Jump frames
+- `IsTerminal`: Vitality < threshold — halts Composure recovery
+- `IsDeathblowVulnerable`: Composure ≥ 1 or Vitality ≤ 0
+
+### EconomyConstants.cs — Balance Configuration
+
+A `sealed record` with all balance parameters (economy values, frame constants, chip damage multiplier, stack decay timings). Constructed once at player initialization from `[Export]` values on `PlayerBridge`. Immutable after construction.
+
+`Defaults` static property provides spec-defined baseline values for unit testing or non-inspector contexts.
+
+### InputBuffer.cs — TTL Priority Queue
+
+Buffers edge-detected button presses with a configurable time-to-live (default 6 frames). Prevents input drops during non-actionable states.
+
+**Mechanics:**
+- `Add()`: Enqueues action with full TTL; rejects duplicates
+- `Consume()`: Returns highest-priority buffered action, removes it
+- `Tick()`: Decrements all TTLs, removes expired entries
+- **Priority order:** BlockParry > Attack > Dodge > Jump
+
+**Execution order in PlayerSimulation.Tick:** Enqueue → Consume → Tick. This ensures freshly-added inputs are immediately available for consumption before aging.
+
+### PlayerInput.cs — Per-Frame Input State
+
+A `readonly struct` containing the complete input state sampled once per physics frame. `MoveX`/`MoveZ` are **world-space direction** (camera-transformed and normalized in `BuildPlayerInput`), not raw stick axes:
+- Stick axes (`MoveX`, `MoveZ`) as `Fixed64`
+- Edge-detected presses (`AttackJustPressed`, `BlockParryJustPressed`, etc.)
+- Held states (`RunHeld`, `BlockParryHeld`)
+- Modifier tier, grounded flag, own/opponent positions
+
+### MoveData.cs — Per-Move Frame/Damage Data
+
+A `readonly struct` bundling all data for a single attack move: Coil/Swing/Recovery frame counts, stagger frames, knockback distance, vitality/composure multipliers. Returned by `IArchetypeData.GetMoveData(tier)`.
+
+### Enum Files
+
+- **AttackTier.cs**: `Light`, `Standard`, `Heavy`, `Super` — maps to modifier buttons
+- **PlayerInputAction.cs**: `None`, `Attack`, `BlockParry`, `Dodge`, `Jump` — buffer entries
+- **ArchetypeType.cs**: `Longsword`, `Greatsword` — archetype selector
+- **CombatEvent.cs**: Events emitted per-tick for the Presentation layer to observe
+
+### Archetypes (`src/simulation/archetypes/`)
+
+- **IArchetypeData**: Single method `GetMoveData(AttackTier) → MoveData`
+- **LongswordData / GreatswordData**: Sealed singletons (`static readonly Instance`, private constructor). Return hardcoded `MoveData` per tier via exhaustive `switch` expressions. The `_ =>` fallback recursively calls `GetMoveData(Standard)` as a safety net.
+
+---
+
+## 3. Bridge Layer (`src/bridge/`)
+
+Godot-aware conduit. Translates between engine and simulation. All classes are `sealed partial` (Godot source generators require `partial`).
+
+### PlayerBridge.cs — Main Conduit
+
+`CharacterBody3D` subclass. The primary per-player node.
+
+**Responsibilities:**
+- Exposes all economy/frame/setup constants as `[Export]` properties (organized by `[ExportGroup]`) for inspector-based playtesting
+- Samples raw hardware input → transforms to world-space → constructs `PlayerInput` struct
+- Calls `_sim.Tick(input)` exactly once per tick phase
+- Applies movement via `MoveAndSlide()` with decaying knockback velocity blend
+- Auto-faces opponent via yaw snap
+- Manages boundary pushback on wall collision
+- Delegates hitbox processing to `HitboxManager`
+- Emits Godot signals for combat events (polled from `_sim.LastEvent` + fatigue edge detection)
+- Provides public accessor methods for HUD/HitboxManager to read simulation state
+
+**Two-pass execution:** `_PhysicsProcess` is disabled when `SetCoordinatorDriven()` is called. Instead, `GameCoordinator` drives `TickPhase(delta)` (input/simulation/movement) and `ResolvePhase()` (hitbox queries/combat events) as separate calls, ensuring both players tick before any resolution.
+
+**Knockback:** Uses a `_knockbackVelocity` field that decays at 0.75× per frame, blended into `Velocity` during `ApplyMovement`. Produces smooth pushback over multiple frames instead of instant teleport. While knockback velocity is significant (> 1.0 m/s), input movement is suppressed to prevent players from walking through pushback.
+
+**Movement priority in `ApplyMovement`:**
+1. Deathblow/Staggered → complete halt (velocity zeroed)
+2. Action-locked (Coil/Swing/Recovery/Parrying/Dodging/Jumping) → slide-to-stop at 0.85× friction per frame
+3. Active knockback (non-locked state, e.g. blocking) → suppress input movement
+4. Normal input → direction × walk/run speed
+5. No input → stop
+
+Knockback velocity is overlaid on top of all branches and decays independently.
+
+**Action name caching:** Input action strings (e.g., `"attack"`, `"attack_p2"`) are built once via `CacheActionNames()`, deferred to the first `_PhysicsProcess` call to avoid race conditions with `PlayerIndex` assignment.
+
+**Modifier tier logic:** At input sampling time, the currently-held modifier button determines `AttackTier`. If none held → `Standard`. Multiple modifiers → last-checked wins (Super > Heavy > Light due to `if` ordering).
+
+### HitboxManager.cs — Manual Hit Detection & Combat Resolution
+
+`Node3D` subclass. Runs `PhysicsDirectSpaceState3D.IntersectShape()` queries each frame during active Swing states.
+
+**Why combat resolution lives here (not Simulation):** Resolution requires the hit/miss boolean from Godot's physics engine — an inherently engine-dependent query. All resulting state mutations flow back through `PlayerSimulation`'s public API (`OnHitReceived`, `OnClash`, etc.), keeping the Simulation as source of truth.
+
+**Hit resolution order (within `ResolveHit`):**
+1. **Clash detection** — Both swinging, same tier → mutual `NotifyClash()`, both enter Recovery, both receive tier-based knockback
+2. **Armor trade** — Defender in Tier 3 Swing with active armor → 1.5× vitality damage, no stagger
+3. **Parry + Shatter** — Defender is Parrying AND attacker is in shatter window → Shatter breaks parry, full damage
+4. **Parry (no Shatter)** — Defender is Parrying → `NotifyParrySuccess()`, no damage
+5. **Shatter whiff** — Attacker is in shatter window but defender is NOT Parrying → no damage, no momentum reward; attacker pays 3.0 Momentum + extra recovery frames
+6. **Deathblow execution** — Defender is in Deathblow state → full damage + `NotifyDeathblowTriggered()`
+7. **Standard hit/block** — Normal damage resolution; block knockback (T1+), stagger knockback (20% of block knockback via `StaggerKnockbackMultiplier`) for unblocked hits
+
+**Physics query:** Uses cached `PhysicsShapeQueryParameters3D` instance (lazy-initialized alongside the `Exclude` RID list) to avoid per-frame heap allocation. `Shape` and `Transform` are updated each frame; `CollisionMask`, `CollideWithAreas`, `CollideWithBodies`, and `Exclude` are set once. `HurtboxLayer = 4` as collision mask. Shape comes from `IArchetypeVisuals.GetHitboxShape()`.
+
+**Single-hit guard:** `_hitRegisteredThisSwing` prevents multiple hits per swing phase. Reset when hitbox deactivates.
+
+### RoundManager.cs — Match Flow
+
+Manages lives (default 4), round timer (210s), deathblow → life loss, timeout → vitality tiebreak, and round resets.
+
+**Signal flow:** Listens for `DeathblowTriggered` from each PlayerBridge. Emits `LivesChanged`, `TimerChanged`, `MatchEnded` for the HUD.
+
+**Round reset:** `FullReset()` on both players → economy reset, state reset, respawn at configured positions.
+
+### StageController.cs — Stage Configuration
+
+Configures floor size and wall positions based on `StageSize` enum (Small 10m, Medium 20m, Large 35m). Resizes visual floor mesh, physics floor collision, and positions 4 boundary walls.
+
+### Archetypes (`src/bridge/archetypes/`)
+
+- **IArchetypeVisuals**: `GetHitboxShape(AttackTier) → Shape3D`
+- **LongswordVisuals / GreatswordVisuals**: Sealed singletons with pre-allocated `Shape3D` instances (avoid GC pressure during `IntersectShape` queries). Shapes match CLAUDE.md §8.
+
+---
+
+## 4. Presentation Layer (`src/presentation/`)
+
+### HUD.cs — Tweened Health Bars
+
+`CanvasLayer` subclass. Reads PlayerBridge accessors every `_Process` frame. Uses `Tween` objects for smooth bar transitions (Quad ease-out, 0.25s duration). Caches bar targets via `Dictionary<ProgressBar, float>` to avoid redundant tween creation when values haven't changed.
+
+Stack labels update only when value changes (dirty check via `_lastP1Stacks` / `_lastP2Stacks`).
+
+Timer display formatted as `M:SS`.
+
+### DebugHUD.cs — Debug Overlay
+
+`CanvasLayer` subclass. Toggled with **F3** (starts hidden). Displays per-player debug information:
+
+- **State**: Current state machine state with frame countdown (e.g., "Coil T2 [14f]", "Dodge Active [8f]")
+- **Attack Tier**: Current tier being used
+- **Economy values**: Vitality, Composure, Momentum (numeric, not just bars)
+- **Stacks**: Frame Advantage Stack count
+- **Flags**: ActionLocked, Hitbox/Armor active, Fatigued, Terminal, Deathblow Vulnerable
+- **Buffer**: Number of queued inputs
+- **Last Event**: Most recent combat event
+- **FPS**: Engine frames per second (bottom-center)
+
+Uses `RichTextLabel` with BBCode for colored flag indicators (red YES / gray no). Panels have semi-transparent black background for readability. Only updates when visible to avoid unnecessary per-frame work.
+
+---
+
+## 5. Scene Coordination (`src/scene/`)
+
+### GameCoordinator.cs — Player Wiring & Two-Pass Orchestration
+
+Wires P1↔P2 opponent references, assigns HitboxManager ownership, registers P2 input actions programmatically (Arrow Keys + Numpad), and drives the two-pass physics update.
+
+**Two-pass `_PhysicsProcess`:**
+1. `Player1.TickPhase(delta)` + `Player2.TickPhase(delta)` — both state machines advance
+2. `Player1.ResolvePhase()` + `Player2.ResolvePhase()` — hitbox queries run with symmetric state
+
+This prevents tick-order asymmetry in clash detection. Each PlayerBridge has `SetCoordinatorDriven()` called in `_Ready` to disable its individual `_PhysicsProcess`.
+
+**P2 input registration:** Uses `InputMap.AddAction()` + `InputEventKey` with `PhysicalKeycode` to create P2-suffixed actions at runtime. Checks `InputMap.HasAction()` to avoid re-registration.
+
+### MainCoordinator.cs — Split-Screen Setup
+
+Wires `RemoteTransform3D` → Camera nodes across the scene tree, and assigns `CameraController` targets (owner/opponent characters).
+
+### CameraController.cs — Split-Screen Camera
+
+`Node3D` subclass with `TopLevel = true` (detaches from parent transform hierarchy).
+
+**Position:** Locks horizontal position to owner character. Height varies inversely with opponent distance (closer → higher camera), smoothly interpolated via `Mathf.Lerp`.
+
+**Rotation:** Yaw tracks opponent direction. Pitch tracks vertical angle to opponent, clamped to `[MinPitch, MaxPitch]`. Both interpolated via `AngleDifference` × `RotationSpeed` × delta.
+
+`SpringArm3D` child handles environment clipping prevention. Length configured via `[Export]`.
+
+---
+
+## 6. Data Flow Diagram
+
+```
+GameCoordinator._PhysicsProcess(delta)
+      │
+      ├── TICK PASS (both players advance before any resolution)
+      │       │
+      │       ├── Player1.TickPhase(delta)
+      │       │       ├── BuildPlayerInput()    → world-space PlayerInput struct
+      │       │       ├── _sim.Tick(input)       → state machine + economy
+      │       │       │       ├── InputBuffer.Add/Consume/Tick
+      │       │       │       ├── ComposureRecovery (cooldown + V² scaling)
+      │       │       │       ├── StackDecay tick
+      │       │       │       ├── RoW Momentum (60° cone check)
+      │       │       │       └── ProcessState() → state transition
+      │       │       ├── ApplyMovement()        → MoveAndSlide() + knockback decay
+      │       │       ├── FaceOpponent()          → Yaw snap
+      │       │       └── ApplyBoundaryPushback()
+      │       │
+      │       └── Player2.TickPhase(delta)  (same as above)
+      │
+      └── RESOLVE PASS (symmetric hit detection)
+              │
+              ├── Player1.ResolvePhase()
+              │       ├── HitboxManager.ProcessHitboxes()
+              │       │       ├── IntersectShape() → Hit/miss query
+              │       │       └── ResolveHit()     → _sim.OnHit*/OnClash/etc.
+              │       └── EmitCombatEvents()       → Godot signals → HUD
+              │
+              └── Player2.ResolvePhase()  (same as above)
+```
+
+---
+
+## 7. Key Design Patterns
+
+| Pattern | Where | Purpose |
+|---------|-------|---------|
+| Simulation-Observer | Global architecture | Godot-independent deterministic core |
+| Sealed classes/records | All concrete types and state records | Prevent inheritance, enable devirtualization |
+| Singleton (private ctor + static instance) | Archetype data/visuals | Stateless, zero-allocation |
+| Immutable records | Player states | Safe `with` expressions, value equality |
+| Sealed record | EconomyConstants | Immutable config record, constructor validation |
+| TTL priority queue | InputBuffer | Frame-buffered input with priority consumption |
+| Lazy initialization | PlayerBridge action names, HitboxManager query params/exclude RIDs | Avoid race conditions, defer allocation |
+| Edge-detected + held input | PlayerInput struct | Separate press events from continuous state |
+| Per-tick output flags | PlayerSimulation | Bridge reads outputs after Tick without coupling |
+| Two-pass coordination | GameCoordinator | Tick all → Resolve all for symmetric frame processing |
+| Signal-based event flow | Bridge → Presentation | Decoupled observer pattern via Godot signals |
+
+---
+
+## 8. Combat Resolution Cheat Sheet
+
+```
+Attacker in Swing phase → IntersectShape() hits defender
+      │
+      ├── Defender is Deathblow-vulnerable (Composure ≥ 1.0 or Vitality ≤ 0)?
+      │       YES → DEATHBLOW EXECUTION (any tier, even blocked → life lost)
+      │
+      ├── Both swinging, same tier?
+      │       YES → CLASH (mutual recovery, momentum surge)
+      │
+      ├── Defender has active armor (T3 Swing)?
+      │       YES → ARMOR TRADE (1.5× vitality to defender, no stagger)
+      │
+      ├── Defender is Parrying?
+      │       ├── Attacker in shatter window + can afford 3.0?
+      │       │       YES → SHATTER (parry broken, full damage + stagger)
+      │       └── NO → PARRY SUCCESS (no damage, +1 stack to defender)
+      │
+      ├── Attacker in shatter window + can afford 3.0?
+      │       YES → SHATTER WHIFF (no damage, no momentum, extra recovery)
+      │
+      └── DEFAULT → STANDARD HIT/BLOCK
+              ├── Blocked T1-T3 → chip vitality (20%), full composure, knockback
+              ├── Blocked T0 → composure only (no vitality chip)
+              └── Unblocked → full vitality + composure damage, stagger + knockback (20%)
+```
+
+---
+
+## 9. Adding a New Archetype
+
+1. Add a value to `ArchetypeType` enum in `src/simulation/ArchetypeType.cs`
+2. Create `src/simulation/archetypes/NewArchetypeData.cs` — implement `IArchetypeData`, define `GetMoveData` with frame data and multipliers per tier
+3. Create `src/bridge/archetypes/NewArchetypeVisuals.cs` — implement `IArchetypeVisuals`, define hitbox shapes per tier as pre-allocated static fields
+4. Add a branch to `PlayerBridge.InitializeArchetype()` for the new enum value
+5. Update `CLAUDE.md` §8 with the new archetype's frame data, multipliers, hitbox shapes, and matchup notes
+6. Update this file (§2 Archetypes section and §3 Archetypes section)
+
+---
+
+## 10. Playtesting Workflow
+
+All economy/frame constants are exposed as `[Export]` properties on `PlayerBridge`, organized by `[ExportGroup]`:
+
+- **Economy group:** Momentum costs (dodge, jump, parry, shatter), generation rates, damage bases, armor multiplier, chip damage multiplier, stagger knockback multiplier, stack offset, stack decay timings, composure recovery cooldown
+- **Frame Constants group:** Parry window, dodge startup/active/recovery, jump startup/active/recovery, evasion fatigue penalties, clash recovery, shatter whiff penalty, input buffer TTL
+- **Setup group:** Archetype selection, speeds, camera pivot, player index
+
+Adjust values in the Godot Inspector at runtime. Changes take effect on the next `_Ready()` call (scene reload). No recompilation needed for balance iteration.
+
+---
+
+## 11. Phase 2 Migration Notes
+
+### LogicBlocks State Machine
+
+The current `object _state` + `switch` pattern works but lacks:
+- Compile-time exhaustive transitions (the `_ => new Idle()` fallback masks missing cases)
+- Hierarchical states (e.g., "Attacking" parent state containing Coil/Swing/Recovery)
+- Native serialization for rollback snapshots
+
+Chickensoft LogicBlocks v5.20.0 is already imported as a NuGet dependency. Migration path:
+1. Define state interfaces/classes using LogicBlocks API
+2. Define transitions as strongly-typed input → state mappings
+3. Replace `ProcessState` switch with LogicBlocks dispatch
+4. Add `MemoryPack` serialization attributes for rollback
+
+### Rollback Netcode
+
+The simulation is already rollback-ready by design:
+- Pure C#, no Godot dependencies
+- Deterministic via Fixed64
+- Single `Tick(PlayerInput)` entry point
+- InputBuffer is simulation-owned
+
+Remaining work:
+1. Implement `MemoryPack` serialization on `PlayerSimulation` (snapshot to byte array)
+2. Build ring buffer of N frames of state + input history
+3. On input correction: restore snapshot → re-simulate forward
+4. Implement `DeterministicRandom` from FixedMathSharp for visual variance
+
+### Unified Entry Point Gap
+
+**Current state:** `PlayerSimulation` exposes 8 public mutation methods (`OnHitReceived`, `OnHitLanded`, `OnClash`, `TryInitiateShatter`, `OnShatterLanded`, `OnShatterWhiff`, `OnParrySuccess`, `OnDeathblowTriggered`) that are called by `HitboxManager` *after* `Tick()` returns. This means a single frame's simulation state is mutated across two call sites: `Tick(input)` and the subsequent combat event callbacks.
+
+**Why it matters for rollback:** Rollback requires replaying a frame from stored data alone. If only `PlayerInput` is stored per frame, the combat callbacks cannot be replayed — the hit/miss result from `IntersectShape()` (a Godot physics query) is lost. Snapshots taken at tick boundaries would not capture the post-callback mutations.
+
+**Resolution strategy:** Replace the 8 public mutation methods with a single `ApplyCombatResult(CombatResult result)` method. `HitboxManager` builds a serializable `CombatResult` struct from the physics query, then the simulation processes it deterministically. The full frame contract becomes: `Tick(input)` → Bridge does physics → `ApplyCombatResult(result)`. For rollback, store both `PlayerInput` + `CombatResult` per frame.
+
+**Why deferred:** This refactor touches `PlayerSimulation` (~8 methods → 1), `HitboxManager` (resolution logic must build structs instead of calling methods), and `PlayerBridge` (passthrough API). `TryInitiateShatter` is currently a query-with-side-effects (returns bool, spends Momentum) that `HitboxManager` uses to branch resolution — some resolution logic would need to move into the simulation. This overlaps heavily with the LogicBlocks migration and MemoryPack serialization work. All three should be coordinated in Phase 2.
+
+### Tick-Order Asymmetry — RESOLVED
+
+**Problem:** Godot calls `_PhysicsProcess` sequentially per node. In the original design, each PlayerBridge ran its full pipeline (tick → hitbox → resolve) independently, creating a frame-order race condition when both players attacked on the same frame.
+
+**Solution (implemented):** `GameCoordinator` now drives a two-pass update:
+1. **Tick pass:** `Player1.TickPhase(delta)` → `Player2.TickPhase(delta)` — both state machines advance
+2. **Resolve pass:** `Player1.ResolvePhase()` → `Player2.ResolvePhase()` — hitbox queries run with symmetric state
+
+Each PlayerBridge has `SetCoordinatorDriven()` called to disable its individual `_PhysicsProcess`. See §5 GameCoordinator and §6 Data Flow Diagram.
+
+---
+
+## 12. Testing
+
+### Framework
+
+GdUnit4 v4.4.1 via NuGet (`gdUnit4.api`). Tests live in `tests/` and cover the simulation layer (pure C#). All test classes use `[TestSuite]` and `[TestCase]` attributes with `partial` classes.
+
+### Test Suites
+
+| File | Tests | Coverage Area |
+|------|-------|---------------|
+| `InputBufferTests.cs` | 12 | TTL queue, priority order, expiry, duplicates |
+| `EconomyHandlerTests.cs` | 27 | Momentum, Vitality, Composure, stacks, fatigue, recovery |
+| `PlayerSimulationStateTests.cs` | 24 | State transitions, action lock, buffer preservation, RoW |
+| `AttackSystemTests.cs` | 33 | Coil→Swing→Recovery, frame data, armor, chip damage, stagger |
+| `EvasionSystemTests.cs` | 28 | Dodge/Jump 3-phase, fatigue degradation, direction restriction |
+| `ShatterClashDeathblowTests.cs` | 31 | Shatter window/cost/whiff, Clash guard, Deathblow triggers |
+| `ArchetypeDataTests.cs` | 39 | Frame data, multipliers, cross-archetype invariants |
+| **Total** | **194** | |
+
+### Running Tests
+
+Tests run inside the Godot editor via the GdUnit4 plugin, or via command line:
+```
+godot --headless --run-tests
+```
+
+### TestHelpers
+
+`tests/TestHelpers.cs` provides factory methods (`EmptyInput()`, `AttackInput(tier)`, `DodgeInput()`, etc.) to avoid repeating PlayerInput's 14-parameter constructor. Also provides `CreateSim()`, `TickN()`, `AdvanceToSwing()`, `AdvanceToRecovery()`, and `CompleteFullAttack()` for common test patterns.
+
+---
+
+## 13. Feature Verification Checklist
+
+Complete list of all implemented features for playtesting validation. Check off items as verified.
+
+### Movement & Facing
+- [ ] Walk movement at `WalkSpeed` (4.0) in world-space direction (camera-relative)
+- [ ] Run movement at `RunSpeed` (7.0) when run held
+- [ ] Auto-face opponent (yaw snap each tick)
+- [ ] Boundary pushback on wall collision (invisible walls with pushback force)
+- [ ] Movement disabled during action-locked states (slide-to-stop instead)
+- [ ] Movement fully halted during Deathblow and Staggered states
+
+### Action Commitment & Slide-to-Stop
+- [ ] All inputs blocked during Coil phase (cannot cancel wind-up)
+- [ ] All inputs blocked during Swing phase (committed to attack)
+- [ ] All inputs blocked during Recovery phase (no block-cancel)
+- [ ] All inputs blocked during Parrying window (6-frame commitment)
+- [ ] All inputs blocked during Dodge startup/active/recovery
+- [ ] All inputs blocked during Jump startup/active/recovery
+- [ ] All inputs blocked during Staggered state
+- [ ] All inputs blocked during Deathblow state
+- [ ] Buffered inputs during action-lock are preserved (not consumed) and fire after action ends
+- [ ] Slide-to-stop when entering action from movement (0.85× friction/frame, ~15 frames)
+- [ ] Blocking is NOT action-locked (can release to return to Idle)
+
+### Input System
+- [ ] Input buffer TTL = 6 frames (inputs persist for ~100ms)
+- [ ] Buffer priority order: BlockParry > Attack > Dodge > Jump
+- [ ] Duplicate inputs rejected (same action not buffered twice)
+- [ ] Edge-detected presses (JustPressed) vs held states (Held) distinguished correctly
+- [ ] P2 inputs mapped via PhysicalKeycode (Arrow Keys + Numpad)
+- [ ] Modifier buttons select attack tier: none=Standard, light=T0, heavy=T2, super=T3
+- [ ] Modifier released before attack press reverts to Standard
+
+### Attack System (Coil → Swing → Recovery)
+- [ ] T0 Flick/Pommel Strike — fastest, no stagger, conditional damage
+- [ ] T1 Cross Cut/Wide Slash — baseline attack
+- [ ] T2 Overhead/Crush — slower, higher damage, weapon recoil on block
+- [ ] T3 Lunge/Cleave — slowest, highest damage, active frame armor during swing
+- [ ] Coil frames match archetype frame data (Longsword: 4/8/16/24, Greatsword: 8/14/24/36)
+- [ ] Swing frames match archetype frame data
+- [ ] Recovery frames match archetype frame data
+- [ ] Frame Advantage Stacks reduce Coil frames on counter-attack (stacks × offset)
+- [ ] All stacks consumed when used for coil reduction
+- [ ] Coil cannot be reduced below 1 frame
+
+### Standard Block
+- [ ] No Momentum cost, always available (including during Fatigue)
+- [ ] Held block (BlockParryHeld) keeps player in Blocking state
+- [ ] Releasing block returns to Idle
+- [ ] Blocked T1-T3: chip vitality damage (20% via ChipDamageMultiplier)
+- [ ] Blocked T1-T3: full composure damage
+- [ ] Blocked T0: composure damage only (no vitality chip)
+- [ ] Knockback on blocked T1+ attacks based on move's KnockbackDistance
+- [ ] Does NOT reset Frame Advantage Stacks
+- [ ] Cannot prevent Deathblow (any hit while vulnerable triggers execution even if blocked)
+
+### Perfect Parry
+- [ ] Costs 0.5 Momentum (gated by CanAfford — reverts to Block if insufficient)
+- [ ] 6-frame active parry window
+- [ ] Grants +1 Frame Advantage Stack on successful parry
+- [ ] Transitions to Blocking when parry window expires
+- [ ] Unavailable during Fatigue (Momentum = 0)
+
+### Knockback
+- [ ] Block knockback: pushes defender based on move's KnockbackDistance
+- [ ] Stagger knockback: 20% of block knockback (StaggerKnockbackMultiplier = 0.2)
+- [ ] Clash knockback: both players pushed apart based on clashing move tier
+- [ ] Knockback uses velocity impulse with 0.75× per-frame decay (smooth, not instant)
+- [ ] Active knockback (> 1.0 m/s) suppresses input movement (cannot walk through pushback)
+- [ ] Knockback eventually decays and allows input resumption
+
+### Evasion — Dodge
+- [ ] Always available regardless of Momentum (never rejected)
+- [ ] Direction restriction: only lateral or backward (no forward dodge)
+- [ ] With sufficient Momentum (≥1.5): normal frames (3 startup / 12 active / 3 recovery)
+- [ ] Without sufficient Momentum: degraded frames (7 startup / 8 active / 3 recovery)
+- [ ] Momentum cost (1.5) deducted when affordable, not deducted when degraded
+- [ ] Three-phase structure: startup (vulnerable) → active (i-frames) → recovery (vulnerable)
+
+### Evasion — Jump
+- [ ] Always available regardless of Momentum (never rejected)
+- [ ] With sufficient Momentum (≥1.0): normal frames (3 startup / 22 active / 5 recovery)
+- [ ] Without sufficient Momentum: degraded frames (7 startup / 18 active / 5 recovery)
+- [ ] Momentum cost (1.0) deducted when affordable, not deducted when degraded
+- [ ] Three-phase structure: startup (grounded) → active (airborne) → recovery (landing)
+- [ ] Ground contact during active phase triggers early transition to recovery
+
+### Shatter Technique
+- [ ] Activates when attacker inputs block_parry during Swing phase within parry window
+- [ ] Costs 3.0 Momentum (paid on activation regardless of outcome)
+- [ ] Shatter on Parry: breaks parry — full damage + stagger to defender
+- [ ] Shatter on Block: whiff — no damage dealt, extra recovery (20 frames)
+- [ ] Shatter on unblocked: whiff — no damage dealt, extra recovery (20 frames)
+- [ ] No momentum reward on shatter whiff
+- [ ] Shatter whiff penalty frames (20) are sufficiently punishing
+
+### Clash System
+- [ ] Triggers when both players swing same tier within the same resolve pass
+- [ ] Both players receive clash_momentum_surge (2.0)
+- [ ] Both players enter Recovery (ClashRecoveryFrames = 8)
+- [ ] Both players receive symmetric knockback based on clashing move tier
+- [ ] Clash double-processing guard (ClashedThisFrame flag) prevents duplicate resolution
+- [ ] Two-pass architecture ensures symmetric clash detection
+
+### Stagger Hierarchy
+- [ ] T0 (Flinchless): no stagger, no interrupt — conditional damage only
+- [ ] T0 unblocked: minor vitality damage
+- [ ] T0 blocked: minor composure buildup (no vitality)
+- [ ] T1 (Standard): interrupts T1/T2 wind-up/swing, T3 wind-up only
+- [ ] T2 (Heavy): same interrupt as T1, causes weapon recoil on block
+- [ ] T3 (Committed): active frame armor during Swing phase
+- [ ] T3 armor absorbs T1/T2 hits but takes 1.5× vitality damage (ArmorTradeLethality)
+- [ ] T3 armor disabled during Fatigue
+- [ ] Stagger frames are per-archetype per-tier (from MoveData)
+
+### Momentum Economy
+- [ ] Range: 0.0–8.0 (8 segments), starts at 4.0
+- [ ] Walking toward opponent generates momentum (0.05/frame, 60° cone)
+- [ ] Running toward opponent generates momentum (0.1/frame, 60° cone)
+- [ ] RoW generation works in Idle, Moving, and Blocking states
+- [ ] RoW 60° cone prevents strafing exploit (dot-product threshold)
+- [ ] Landing any strike (hit or blocked) generates 0.5 momentum
+- [ ] Clash generates 2.0 momentum surge
+- [ ] Fatigue at Momentum = 0: disables Parry, disables T3 armor, degrades evasion frames
+- [ ] Momentum visible only in owning player's viewport (hidden from opponent)
+
+### Composure Economy
+- [ ] Range: 0.0–1.0 (Deathblow at ≥1.0)
+- [ ] Recovery paused for 90 frames (1.5s) after taking composure damage
+- [ ] Recovery rate = 0.0036/frame × V² (quadratic vitality scaling)
+- [ ] At 50% HP → 25% recovery rate; at 25% HP → 6.25%
+- [ ] Terminal vitality (< 0.1) halts recovery entirely
+- [ ] Composure builds meaningfully during sustained pressure
+- [ ] Composure recovers noticeably during lulls (with cooldown respected)
+- [ ] Recovery rate (0.0036) feels balanced for game pace
+
+### Vitality Economy
+- [ ] Range: 0.0–1.0
+- [ ] Damage formula: base_vitality_damage (0.08) × move multiplier
+- [ ] Chip damage on block: 20% of normal vitality damage (T1-T3 only)
+- [ ] Vitality reaching 0 makes Deathblow inevitable
+
+### Frame Advantage Stacks
+- [ ] +1 stack per successful Perfect Parry
+- [ ] Each stack = 1 frame of Coil reduction on next counter-attack
+- [ ] All stacks consumed on counter-attack (reset to 0)
+- [ ] Reset on: non-parried hit received (blocked or unblocked)
+- [ ] Standard block does NOT reset stacks
+- [ ] Gradual decay: starts after 180 frames (3s) of no parry activity
+- [ ] Decay rate: lose 1 stack per 60 frames (1s) during decay
+
+### Deathblow System
+- [ ] Triggers when Composure ≥ 1.0 or Vitality ≤ 0, then any strike lands
+- [ ] Any tier can trigger Deathblow (including T0)
+- [ ] Blocking cannot prevent Deathblow
+- [ ] Deathblow state: all inputs blocked, movement halted
+- [ ] Receiver loses 1 life on Deathblow
+
+### Round Structure
+- [ ] 4 lives per player
+- [ ] 210-second round timer
+- [ ] Timeout: higher Vitality wins, loser loses 1 life
+- [ ] On life loss: full reset (positions, Vitality, Composure, Momentum, stacks)
+- [ ] Match ends when one player reaches 0 lives
+- [ ] HUD lives display initializes correctly at round start
+
+### HUD & Presentation
+- [ ] Vitality bar (red, continuous)
+- [ ] Composure bar (yellow-orange, fills toward center)
+- [ ] Momentum gauge (8 segments)
+- [ ] Stack counter (numerical)
+- [ ] Timer display (M:SS format)
+- [ ] Lives display per player
+- [ ] Tweened bar transitions (smooth, not snapping)
+
+### Camera & Split-Screen
+- [ ] Two viewports (50% screen each) sharing same World3D
+- [ ] Each camera tracks behind/above owner player
+- [ ] Auto-rotation toward opponent
+- [ ] SpringArm3D prevents environment clipping
+- [ ] Camera height adjusts with opponent distance
+
+### Debug Overlay
+- [ ] F3 toggles debug HUD visibility
+- [ ] Per-player state name with frame countdown displayed
+- [ ] Economy values shown numerically (Vitality, Composure, Momentum)
+- [ ] Flags displayed: ActionLocked, Hitbox, Armor, Fatigued, Terminal, DB Vulnerable
+- [ ] Input buffer queue count shown
+- [ ] Last combat event displayed
+- [ ] FPS counter shown
+- [ ] Debug HUD starts hidden by default
+
+### Stage System
+- [ ] Small stage (10m × 10m) — close-range testing
+- [ ] Medium stage (20m × 20m) — balanced testing
+- [ ] Large stage (35m × 35m) — spacing/RoW testing
+- [ ] Invisible boundary walls with pushback
+
+### Two-Pass Architecture
+- [ ] GameCoordinator drives TickPhase on both players before ResolvePhase
+- [ ] Individual PlayerBridge._PhysicsProcess disabled via SetCoordinatorDriven
+- [ ] Symmetric clash detection (no P1 advantage from tick order)

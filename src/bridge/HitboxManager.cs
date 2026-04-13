@@ -1,27 +1,41 @@
-
 // Manages manual physics queries for hit detection.
 // Runs IntersectShape() each frame during active Swing states.
-// See Prototype Brief Section 7.
+//
+// ARCHITECTURAL NOTE: Combat resolution lives here (Bridge) rather than in a
+// pure Simulation CombatResolver because resolution requires the hit/miss boolean
+// from Godot's PhysicsDirectSpaceState3D — an inherently engine-dependent query.
+// All state mutations flow through PlayerSimulation's public API (OnHitReceived,
+// OnClash, etc.), keeping the Simulation layer the source of truth for combat state.
 using Godot;
-using System.Collections.Generic;
+using FixedMathSharp;
 using ResonanceOfSteel.Simulation;
+using ResonanceOfSteel.Simulation.Archetypes;
+using ResonanceOfSteel.Bridge.Archetypes;
 
 namespace ResonanceOfSteel.Bridge
 {
-	public partial class HitboxManager : Node3D
+	public sealed partial class HitboxManager : Node3D
 	{
-		// Set these from the parent scene.
+		// Distance from character origin to effective weapon hilt (attack origin point).
+		// Consistent across all archetypes and tiers — the hitbox shape itself varies.
+		private const float HiltOffset = 1.0f;
+
 		public PlayerBridge OwnerBridge { get; set; }
 		public PlayerBridge OpponentBridge { get; set; }
 		public IArchetypeVisuals ArchetypeVisuals { get; set; }
 		public IArchetypeData ArchetypeData { get; set; }
 
-		// Collision layers (Brief Section 7.2)
-		private const uint HitboxLayer = 2;  // Layer 2: active during Swing
-		private const uint HurtboxLayer = 4;  // Layer 3: active during Coil and Recovery
+		// Collision layer for hurtbox detection (Brief §10.1 — Hurtbox is Layer 3, bit mask = 4)
+		private const uint HurtboxLayer = 4;
 
-		// Frame counter to prevent registering the same hit twice in one Swing.
-		private bool _hitRegisteredThisSwing = false;
+		private bool _hitRegisteredThisSwing;
+
+		// Cached per-instance physics query exclusion list (avoids per-frame allocation).
+		private Godot.Collections.Array<Rid> _excludeRids;
+		private Area3D _ownerHurtbox;
+
+		// Cached query parameters to avoid per-frame heap allocation during Swing.
+		private PhysicsShapeQueryParameters3D _queryParams;
 
 		public void ProcessHitboxes()
 		{
@@ -35,38 +49,40 @@ namespace ResonanceOfSteel.Bridge
 
 			if (_hitRegisteredThisSwing) return;
 
-			var hit = QueryHitbox();
-			if (hit) ResolveHit();
+			if (QueryHitbox())
+				ResolveHit();
 		}
 
 		private bool QueryHitbox()
 		{
 			var spaceState = GetWorld3D().DirectSpaceState;
 			var shape = ArchetypeVisuals.GetHitboxShape(OwnerBridge.GetCurrentTier());
-			var myHurtbox = OwnerBridge.GetNode<Area3D>("Hurtbox");
 
-			// Create a transform that is slightly in front of the player
-			// This prevents hitting enemies standing behind you.
-			Transform3D hitTransform = OwnerBridge.GlobalTransform;
-			Vector3 forwardDirection = -hitTransform.Basis.Z; // Standard Godot forward
-			hitTransform.Origin += forwardDirection * 1.0f; // Move hitbox 1 meter forward
-
-			var query = new PhysicsShapeQueryParameters3D
+			if (_queryParams == null)
 			{
-				Shape = shape,
-				Transform = hitTransform, // Use the offset transform
-				CollisionMask = HurtboxLayer,
-				CollideWithAreas = true,
-				CollideWithBodies = false,
-				Exclude = new Godot.Collections.Array<Rid>
+				_ownerHurtbox = OwnerBridge.GetNode<Area3D>("Hurtbox");
+				_excludeRids = new Godot.Collections.Array<Rid>
 				{
-					OwnerBridge.GetRid(), // Exclude the CharacterBody3D
-					myHurtbox.GetRid()    // Exclude the Hurtbox Area3D
-				}
-			};
+					OwnerBridge.GetRid(),
+					_ownerHurtbox.GetRid()
+				};
+				_queryParams = new PhysicsShapeQueryParameters3D
+				{
+					CollisionMask = HurtboxLayer,
+					CollideWithAreas = true,
+					CollideWithBodies = false,
+					Exclude = _excludeRids
+				};
+			}
 
-			var results = spaceState.IntersectShape(query);
-			return results.Count > 0;
+			Transform3D hitTransform = OwnerBridge.GlobalTransform;
+			Vector3 forwardDirection = -hitTransform.Basis.Z;
+			hitTransform.Origin += forwardDirection * HiltOffset;
+
+			_queryParams.Shape = shape;
+			_queryParams.Transform = hitTransform;
+
+			return spaceState.IntersectShape(_queryParams).Count > 0;
 		}
 
 		private void ResolveHit()
@@ -74,27 +90,60 @@ namespace ResonanceOfSteel.Bridge
 			_hitRegisteredThisSwing = true;
 
 			var tier = OwnerBridge.GetCurrentTier();
-			var mults = ArchetypeData.GetDamageMultipliers(tier);
+			var move = ArchetypeData.GetMoveData(tier);
 
-			// Determine if this is a block, parry, or clean hit.
-			// Check opponent state name (exposed from simulation).
-			string oppState = OpponentBridge.GetStateName();
-			bool isBlocked = oppState == "Blocking" || oppState == "Parrying";
-			bool isParried = oppState == "Parrying";
-			bool isDeathblow = oppState == "Deathblow";
-			bool attackerAttemptingShatter = OwnerBridge.IsInShatterWindow();
+			// ── Clash detection ──────────────────────────────────────────
+			// Guard: if either player already recorded a clash this frame
+			// (set by the other HitboxManager), skip to avoid double-processing.
+			if (OwnerBridge.IsClashedThisFrame() || OpponentBridge.IsClashedThisFrame())
+				return;
 
+			bool opponentSwinging = OpponentBridge.IsHitboxActive();
+			AttackTier opponentTier = OpponentBridge.GetCurrentTier();
+			if (opponentSwinging && opponentTier == tier)
+			{
+				OwnerBridge.NotifyClash();
+				OpponentBridge.NotifyClash();
+
+				// Clash knockback — both players pushed apart based on clashing move tier.
+				if (move.KnockbackDistance > 0)
+				{
+					var clashDir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
+					clashDir.Y = 0;
+					OwnerBridge.ApplyKnockback(-clashDir, move.KnockbackDistance);
+					OpponentBridge.ApplyKnockback(clashDir, move.KnockbackDistance);
+				}
+				return;
+			}
+
+			// ── Semantic state queries (no string comparison) ────────────
+			bool isBlocked = OpponentBridge.IsBlocking() || OpponentBridge.IsParrying();
+			bool isParried = OpponentBridge.IsParrying();
+			bool isInDeathblow = OpponentBridge.IsInDeathblow();
+			bool attackerInShatterWindow = OwnerBridge.IsInShatterWindow();
+
+			// ── Armor trade: defender in Tier 3 Swing with active armor ──
+			if (OpponentBridge.IsArmorActive())
+			{
+				var armorVMult = move.VitalityMultiplier * OwnerBridge.GetArmorTradeLethality();
+				OpponentBridge.ReceiveHit(armorVMult, move.ComposureMultiplier,
+					blocked: false, tier, staggerFrames: 0);
+				OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
+					move.ComposureMultiplier, blocked: false);
+				return;
+			}
+
+			// ── Parry / Shatter resolution ───────────────────────────────
 			if (isParried)
 			{
-				// Shatter: the attacker pressed block within the parry window of this contact
-				// frame (opponent being in Parrying already guarantees their side), and the
-				// attacker can afford the Momentum cost.
-				bool isShatter = attackerAttemptingShatter && OwnerBridge.TryInitiateShatter();
-
+				// Shatter: attacker must be in shatter window AND afford the cost.
+				// TryInitiateShatter pays the 3.0 Momentum cost on success.
+				bool isShatter = attackerInShatterWindow && OwnerBridge.TryInitiateShatter();
 				if (isShatter)
 				{
-					// Break the parry — deal full unblocked damage to the defender.
-					OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: false);
+					// Shatter breaks the parry — full damage applies.
+					OpponentBridge.ReceiveHit(move.VitalityMultiplier,
+						move.ComposureMultiplier, blocked: false, tier, move.StaggerFrames);
 					OwnerBridge.NotifyShatterLanded();
 				}
 				else
@@ -104,31 +153,50 @@ namespace ResonanceOfSteel.Bridge
 				return;
 			}
 
-			if (attackerAttemptingShatter)
+			// ── Shatter whiff (attacker in shatter window but defender is NOT parrying) ─
+			// The swing visually connects but deals no damage — the Shatter commitment
+			// nullifies the hit. Attacker pays 3.0 Momentum AND suffers extra recovery.
+			// No momentum reward, no damage to defender.
+			if (attackerInShatterWindow && OwnerBridge.TryInitiateShatter())
 			{
-				// Shatter whiff (Framework Section 4): defender used Standard Block, not Parry.
-				// The block still protects the defender normally, but the attacker is penalized:
-				// Momentum is drained and a -4 frame Recovery disadvantage is applied.
-				OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: true);
 				OwnerBridge.NotifyShatterWhiff();
 				return;
 			}
 
-			if (isDeathblow)
+			// ── Deathblow execution ──────────────────────────────────────
+			// Shatter whiff takes priority: once in deathblow the round is already
+			// decided, so any strike (including a whiffed Shatter) initiates the
+			// execution animation. Shatter whiff is checked above.
+			if (isInDeathblow)
 			{
-				// Deathblow: defender is already in Deathblow state, so this hit finishes them off.
-				// Apply the hit as normal to trigger the defender's death sequence, but also notify
-				// the attacker that they landed a Deathblow for UI purposes.
-				OpponentBridge.ReceiveHit(mults.V, mults.C, blocked: false);
+				OpponentBridge.ReceiveHit(move.VitalityMultiplier,
+					move.ComposureMultiplier, blocked: false, tier, move.StaggerFrames);
 				OwnerBridge.NotifyDeathblowTriggered();
 				return;
 			}
 
-			// Apply damage to opponent.
-			OpponentBridge.ReceiveHit(mults.V, mults.C, isBlocked);
+			// ── Standard hit / block ─────────────────────────────────────
+			OpponentBridge.ReceiveHit(move.VitalityMultiplier,
+				move.ComposureMultiplier, isBlocked, tier, move.StaggerFrames);
+			OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
+				move.ComposureMultiplier, isBlocked);
 
-			// Notify attacker that hit landed.
-			OwnerBridge.NotifyHitLanded(mults.V, mults.C, isBlocked);
+			// ── Knockback on block (T1+ only) ────────────────────────────
+			if (move.KnockbackDistance > 0)
+			{
+				var dir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
+				dir.Y = 0;
+				if (isBlocked && tier != AttackTier.Light)
+				{
+					OpponentBridge.ApplyKnockback(dir, move.KnockbackDistance);
+				}
+				else if (!isBlocked)
+				{
+					// Stagger knockback: 20% of block knockback (StaggerKnockbackMultiplier).
+					OpponentBridge.ApplyKnockback(dir,
+						move.KnockbackDistance * OwnerBridge.StaggerKnockbackMultiplier);
+				}
+			}
 		}
 	}
 }

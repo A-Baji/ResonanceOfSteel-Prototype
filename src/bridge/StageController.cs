@@ -2,7 +2,7 @@ using Godot;
 
 namespace ResonanceOfSteel.Bridge
 {
-	public partial class StageController : Node3D
+	public sealed partial class StageController : Node3D
 	{
 		public enum StageSize { Small, Medium, Large }
 
@@ -10,9 +10,6 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public MeshInstance3D Floor;
 		[Export] public CollisionShape3D FloorCollision;
 		[Export] public StaticBody3D NorthWall, SouthWall, EastWall, WestWall;
-
-		// Force applied to the player upon contact (Brief Section 10.1)
-		[Export] public float PushbackStrength = 5.0f;
 
 		public override void _Ready()
 		{

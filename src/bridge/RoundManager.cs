@@ -2,11 +2,10 @@
 // Manages match state: lives, timer, round resets, win conditions.
 // Lives in the Bridge layer (Godot-aware) because it manages scene state.
 using Godot;
-using ResonanceOfSteel.Bridge;
 
 namespace ResonanceOfSteel.Bridge
 {
-	public partial class RoundManager : Node
+	public sealed partial class RoundManager : Node
 	{
 		[Export] public PlayerBridge Player1;
 		[Export] public PlayerBridge Player2;
@@ -36,10 +35,8 @@ namespace ResonanceOfSteel.Bridge
 			_p2Lives = StartingLives;
 
 			// Listen for Deathblow signals.
-			Player1.Connect(PlayerBridge.SignalName.DeathblowTriggered,
-				new Callable(this, nameof(OnPlayer1Deathblow)));
-			Player2.Connect(PlayerBridge.SignalName.DeathblowTriggered,
-				new Callable(this, nameof(OnPlayer2Deathblow)));
+			Player1.DeathblowTriggered += OnPlayer1Deathblow;
+			Player2.DeathblowTriggered += OnPlayer2Deathblow;
 
 			CallDeferred(nameof(StartRound));
 		}
@@ -62,24 +59,23 @@ namespace ResonanceOfSteel.Bridge
 
 			Player1.FullReset(Player1SpawnPos);
 			Player2.FullReset(Player2SpawnPos);
+
+			// Emit initial values so the HUD is correct regardless of _Ready order.
+			EmitSignal(SignalName.LivesChanged, _p1Lives, _p2Lives);
 		}
 
 		// Called when Player 1 lands a Deathblow (Player 2 loses a life).
-		private void OnPlayer1Deathblow()
-		{
-			GD.Print("Player 1 Deathblow triggered!");
-			_roundActive = false;
-			_p2Lives--;
-			EmitSignal(SignalName.LivesChanged, _p1Lives, _p2Lives);
-			CheckMatchEnd();
-		}
+		private void OnPlayer1Deathblow() => OnDeathblow(attackerIndex: 1);
 
 		// Called when Player 2 lands a Deathblow (Player 1 loses a life).
-		private void OnPlayer2Deathblow()
+		private void OnPlayer2Deathblow() => OnDeathblow(attackerIndex: 2);
+
+		private void OnDeathblow(int attackerIndex)
 		{
-			GD.Print("Player 2 Deathblow triggered!");
+			GD.Print($"Player {attackerIndex} Deathblow triggered!");
 			_roundActive = false;
-			_p1Lives--;
+			if (attackerIndex == 1) _p2Lives--;
+			else _p1Lives--;
 			EmitSignal(SignalName.LivesChanged, _p1Lives, _p2Lives);
 			CheckMatchEnd();
 		}
@@ -106,7 +102,7 @@ namespace ResonanceOfSteel.Bridge
 
 			// Match continues — reset after a short delay.
 			var timer = GetTree().CreateTimer(2.0);
-			timer.Connect("timeout", new Callable(this, nameof(StartRound)));
+			timer.Timeout += StartRound;
 		}
 	}
 }

@@ -2,7 +2,7 @@
 using Godot;
 using ResonanceOfSteel.Simulation;
 
-namespace ResonanceOfSteel.Bridge
+namespace ResonanceOfSteel.Bridge.Archetypes
 {
 	public interface IArchetypeVisuals
 	{

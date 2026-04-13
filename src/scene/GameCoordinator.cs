@@ -1,66 +1,70 @@
-// TestSceneCoordinator.cs (attach to TestScene root node)
 using Godot;
 using ResonanceOfSteel.Bridge;
 
-
 namespace ResonanceOfSteel.Scene
 {
-	public partial class GameCoordinator : Node3D
+	public sealed partial class GameCoordinator : Node3D
 	{
 		[Export] public PlayerBridge Player1;
 		[Export] public PlayerBridge Player2;
-		private HitboxManager _hitboxP1 => Player1.GetNode<HitboxManager>("HitboxManager");
-		private HitboxManager _hitboxP2 => Player2.GetNode<HitboxManager>("HitboxManager");
 
 		public override void _Ready()
 		{
-			// Suppress the console spam and allow P2 testing
 			RegisterPlayer2Inputs();
 
-			// Wire opponents
+			var hitboxP1 = Player1.GetNode<HitboxManager>("HitboxManager");
+			var hitboxP2 = Player2.GetNode<HitboxManager>("HitboxManager");
+
 			Player1.Opponent = Player2;
 			Player2.Opponent = Player1;
 
-			// Wire hitbox managers
-			_hitboxP1.OwnerBridge = Player1;
-			_hitboxP1.OpponentBridge = Player2;
+			hitboxP1.OwnerBridge = Player1;
+			hitboxP1.OpponentBridge = Player2;
+			Player1.ActiveHitboxManager = hitboxP1;
 
-			// Give the players control over their respective hitbox managers
-			Player1.ActiveHitboxManager = _hitboxP1;
-			Player2.ActiveHitboxManager = _hitboxP2;
+			hitboxP2.OwnerBridge = Player2;
+			hitboxP2.OpponentBridge = Player1;
+			Player2.ActiveHitboxManager = hitboxP2;
 
-			_hitboxP2.OwnerBridge = Player2;
-			_hitboxP2.OpponentBridge = Player1;
-			GD.Print(_hitboxP1 + " owner: " + _hitboxP1.OwnerBridge + ", opponent: " + _hitboxP1.OpponentBridge);
-			GD.Print(_hitboxP2 + " owner: " + _hitboxP2.OwnerBridge + ", opponent: " + _hitboxP2.OpponentBridge);
+			// Disable individual _PhysicsProcess — coordinator drives both players.
+			Player1.SetCoordinatorDriven();
+			Player2.SetCoordinatorDriven();
 
-			// Set player indices
-			Player1.PlayerIndex = 0;
-			Player2.PlayerIndex = 1;
+			// PlayerIndex is set via [Export] in the scene Inspector.
+			// CacheActionNames() runs lazily on first TickPhase to read the correct value.
+		}
 
-			// Position players facing each other
-			Player1.GlobalPosition = new Vector3(-3, 1, 0);
-			Player2.GlobalPosition = new Vector3(3, 1, 0);
+		public override void _PhysicsProcess(double delta)
+		{
+			// Two-pass update ensures symmetric state for clash detection.
+			// Phase 1: Both players tick (state machines advance, movement applies).
+			Player1.TickPhase(delta);
+			Player2.TickPhase(delta);
+
+			// Phase 2: Both players resolve hitboxes (both states are current).
+			Player1.ResolvePhase();
+			Player2.ResolvePhase();
 		}
 
 		private void RegisterPlayer2Inputs()
 		{
-			// Define the P2 actions and some default testing keys
+			// P2 actions mapped per CLAUDE.md §9.1.
+			// Movement: Arrow Keys. Actions: Numpad.
 			var p2Actions = new Godot.Collections.Dictionary<string, Key>
-		{
-			{ "attack_p2", Key.KpEnter },
-			{ "block_parry_p2", Key.KpSubtract },
-			{ "dodge_p2", Key.Backspace },
-			{ "jump_p2", Key.Kp0 },
-			{ "run_p2", Key.KpMultiply },
-			{ "modifier_light_p2", Key.Kp1 },
-			{ "modifier_heavy_p2", Key.Kp2 },
-			{ "modifier_super_p2", Key.Kp3 },
-			{ "move_left_p2", Key.Kp4 },
-			{ "move_down_p2", Key.Kp5 },
-			{ "move_right_p2", Key.Kp6 },
-			{ "move_up_p2", Key.Kp8 }
-		};
+			{
+				{ "attack_p2", Key.Kp5 },
+				{ "block_parry_p2", Key.KpEnter },
+				{ "dodge_p2", Key.KpAdd },
+				{ "jump_p2", Key.Kp0 },
+				{ "run_p2", Key.KpMultiply },
+				{ "modifier_light_p2", Key.Kp1 },
+				{ "modifier_heavy_p2", Key.Kp2 },
+				{ "modifier_super_p2", Key.Kp3 },
+				{ "move_left_p2", Key.Left },
+				{ "move_down_p2", Key.Down },
+				{ "move_right_p2", Key.Right },
+				{ "move_up_p2", Key.Up }
+			};
 
 			foreach (var kvp in p2Actions)
 			{
@@ -68,9 +72,9 @@ namespace ResonanceOfSteel.Scene
 				{
 					InputMap.AddAction(kvp.Key);
 
-					// Map the physical key so we can trigger the inputs
+					// Use PhysicalKeycode to match P1's project.godot definitions.
 					var inputEvent = new InputEventKey();
-					inputEvent.Keycode = kvp.Value;
+					inputEvent.PhysicalKeycode = kvp.Value;
 					InputMap.ActionAddEvent(kvp.Key, inputEvent);
 				}
 			}

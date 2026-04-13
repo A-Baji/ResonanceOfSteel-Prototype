@@ -1,17 +1,15 @@
-using System.ComponentModel;
 using Godot;
 
 namespace ResonanceOfSteel.Scene
 {
-	public partial class CameraController : Node3D
+	public sealed partial class CameraController : Node3D
 	{
 		[Export] public Node3D OwnerCharacter;
 		[Export] public Node3D OpponentCharacter;
 		[Export] public float RotationSpeed = 5.0f;
 
-		// SpringArm offset so camera sits behind and above the player.
+		// Max spring arm distance — applied to the child SpringArm3D at startup.
 		[Export] public float SpringArmLength = 5.0f;
-		[Export] public float CameraHeight = 2.0f;
 
 		// Camera adjustment parameters.
 		[Export] public float HeightScale = 5.0f; // How much the camera height changes based on distance.
@@ -36,8 +34,9 @@ namespace ResonanceOfSteel.Scene
 			GlobalPosition = OwnerCharacter.GlobalPosition;
 
 			// Calculate horizontal distance to opponent for height adjustment
-			Vector3 directionToOpponent = OpponentCharacter.GlobalPosition - OwnerCharacter.GlobalPosition;
-			float horizontalDistance = directionToOpponent.Length();
+			Vector3 toOpponent = OpponentCharacter.GlobalPosition - OwnerCharacter.GlobalPosition;
+			toOpponent.Y = 0;
+			float horizontalDistance = toOpponent.Length();
 
 			// Compute target height based on distance (closer = higher camera)
 			float targetHeight = HeightScale / (horizontalDistance + 0.001f); // Avoid division by zero
@@ -81,7 +80,10 @@ namespace ResonanceOfSteel.Scene
 
 		public override void _Ready()
 		{
-			TopLevel = true; // Ignore parent (player) rotation entirely
+			TopLevel = true;
+			var springArm = GetNodeOrNull<SpringArm3D>("SpringArm");
+			if (springArm != null)
+				springArm.SpringLength = SpringArmLength;
 		}
 	}
 }

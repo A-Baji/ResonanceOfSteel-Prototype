@@ -1,0 +1,55 @@
+[gd_scene format=3]
+
+[ext_resource type="Script" path="res://src/presentation/DebugHUD.cs" id="1_debug"]
+
+[node name="DebugHud" type="CanvasLayer" node_paths=PackedStringArray("P1DebugLabel", "P2DebugLabel", "FpsLabel")]
+script = ExtResource("1_debug")
+P1DebugLabel = NodePath("P1DebugPanel/P1DebugLabel")
+P2DebugLabel = NodePath("P2DebugPanel/P2DebugLabel")
+FpsLabel = NodePath("FpsLabel")
+
+[node name="P1DebugPanel" type="PanelContainer" parent="."]
+offset_left = 10.0
+offset_top = 230.0
+offset_right = 330.0
+offset_bottom = 580.0
+self_modulate = Color(0, 0, 0, 0.6)
+
+[node name="P1DebugLabel" type="RichTextLabel" parent="P1DebugPanel"]
+layout_mode = 2
+bbcode_enabled = true
+text = "P1 Debug"
+fit_content = true
+scroll_active = false
+
+[node name="P2DebugPanel" type="PanelContainer" parent="."]
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -330.0
+offset_top = 230.0
+offset_right = -10.0
+offset_bottom = 580.0
+grow_horizontal = 0
+self_modulate = Color(0, 0, 0, 0.6)
+
+[node name="P2DebugLabel" type="RichTextLabel" parent="P2DebugPanel"]
+layout_mode = 2
+bbcode_enabled = true
+text = "P2 Debug"
+fit_content = true
+scroll_active = false
+
+[node name="FpsLabel" type="Label" parent="."]
+anchors_preset = 7
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -30.0
+offset_top = -30.0
+offset_right = 30.0
+grow_horizontal = 2
+grow_vertical = 0
+text = "FPS: 60"
+horizontal_alignment = 1

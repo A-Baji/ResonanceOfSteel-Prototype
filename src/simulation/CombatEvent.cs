@@ -8,13 +8,9 @@ namespace ResonanceOfSteel.Simulation
 		HitLand,           // An unblocked hit connected
 		HitBlocked,        // A hit was blocked (Standard Block)
 		ParrySuccess,      // A Perfect Parry succeeded
-		ParryFailed,       // Tried to parry but timing was wrong
 		ShatterEvent,      // A Shatter landed (defender parry broken)
-		ShatterWhiff,      // Shatter attempted against a Standard Block — attacker penalized
+		ShatterWhiff,      // Shatter attempted but defender was not Parrying — attacker penalized
 		ClashEvent,        // Two attacks of the same tier met simultaneously
-		DodgeSuccess,      // A dodge was executed
-		FatigueEntered,    // Momentum hit zero
-		FatigueExited,     // Momentum recovered from zero
 		DeathblowTriggered,// Composure full + hit landed = execution
 	}
 }

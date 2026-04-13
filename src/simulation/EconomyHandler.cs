@@ -2,7 +2,7 @@ using FixedMathSharp;
 
 namespace ResonanceOfSteel.Simulation
 {
-	public class EconomyHandler
+	public sealed class EconomyHandler
 	{
 		private readonly EconomyConstants _c;
 
@@ -14,17 +14,20 @@ namespace ResonanceOfSteel.Simulation
 		// Frame Advantage Stacks from Prototype Brief Section 6.3.
 		public int FrameAdvantageStacks { get; private set; }
 
+		// Composure recovery cooldown — frames remaining before recovery can tick.
+		private int _composureCooldownRemaining;
+
 		// Derived states
 		public bool IsFatigued => Momentum <= Fixed64.Zero;
 		public bool IsTerminal => Vitality < _c.TerminalVitalityThreshold;
-		public bool IsDeathblowVulnerable => Composure >= Fixed64.One || IsTerminal;
+		public bool IsDeathblowVulnerable => Composure >= Fixed64.One || Vitality <= Fixed64.Zero;
 
 		public EconomyHandler(EconomyConstants constants)
 		{
 			_c = constants;
-			Momentum = (Fixed64)4.0;      // Start with no Momentum
-			Composure = Fixed64.Zero;      // Start with no Composure strain
-			Vitality = Fixed64.One;       // Start at full health
+			Momentum = _c.MomentumMax / (Fixed64)2.0;
+			Composure = Fixed64.Zero;
+			Vitality = Fixed64.One;
 		}
 
 		// ── Momentum ──────────────────────────────────────────────────
@@ -59,20 +62,30 @@ namespace ResonanceOfSteel.Simulation
 
 		// ── Composure ─────────────────────────────────────────────────
 
-		// Called each physics frame. Implements R_comp = B_rate * (V_curr / V_max).
-		// Brief Section 6.2: recovery stops when Terminal.
+		// Called each physics frame. Sekiro-inspired recovery:
+		// 1. Recovery is paused for ComposureRecoveryCooldownFrames after taking composure damage.
+		// 2. Recovery rate scales with Vitality² (quadratic), not linear.
+		//    At 50% HP → 25% recovery rate. At 25% HP → 6.25%. Makes vitality damage meaningful.
+		// 3. Terminal vitality stops recovery entirely.
 		public void TickComposureRecovery()
 		{
 			if (IsTerminal) return;
-			var recovery = _c.ComposureBaseRecoveryRate * Vitality; // V_max is always 1
+			if (_composureCooldownRemaining > 0)
+			{
+				_composureCooldownRemaining--;
+				return;
+			}
+			var vSquared = Vitality * Vitality; // Quadratic scaling
+			var recovery = _c.ComposureBaseRecoveryRate * vSquared;
 			Composure = FixedMath.Max(Composure - recovery, Fixed64.Zero);
 		}
 
 		// Called when this character is hit or blocked.
-		// multiplier comes from DamageMultipliers in FrameData.cs.
+		// multiplier comes from MoveData returned by IArchetypeData.GetMoveData().
 		public void ApplyComposureDamage(Fixed64 multiplier)
 		{
 			Composure = FixedMath.Min(Composure + _c.BaseComposureDamage * multiplier, Fixed64.One);
+			_composureCooldownRemaining = _c.ComposureRecoveryCooldownFrames;
 		}
 
 		// ── Vitality ──────────────────────────────────────────────────
@@ -84,33 +97,63 @@ namespace ResonanceOfSteel.Simulation
 
 		// ── Frame Advantage Stacks ─────────────────────────────────────
 
-		// Called on each successful Perfect Parry (Brief Section 6.3).
+		// Frames since the last successful parry — drives gradual stack decay.
+		private int _framesSinceLastParry;
+		private int _decayAccumulator;
+
+		// Called on each successful Perfect Parry.
 		public void IncrementFrameAdvantage()
 		{
 			FrameAdvantageStacks++;
+			_framesSinceLastParry = 0;
+			_decayAccumulator = 0;
 		}
 
-		// Called on: Lethality damage, failed parry, attack initiated, Standard Block input.
+		// Called on: non-parried hit received (blocked or unblocked).
 		public void ResetFrameAdvantage()
 		{
 			FrameAdvantageStacks = 0;
+			_framesSinceLastParry = 0;
+			_decayAccumulator = 0;
 		}
 
-		// Returns the Coil reduction in frames if threshold is met, otherwise 0.
-		public int GetFrameAdvantageCoilReduction()
+		// Consumes all stacks and returns total Coil reduction (stacks × offset).
+		public int ConsumeFrameAdvantageCoilReduction()
 		{
-			return FrameAdvantageStacks >= _c.FrameAdvantageThreshold
-				? _c.FrameAdvantageOffset
-				: 0;
+			if (FrameAdvantageStacks <= 0) return 0;
+			int reduction = FrameAdvantageStacks * _c.FrameAdvantageOffset;
+			FrameAdvantageStacks = 0;
+			_framesSinceLastParry = 0;
+			_decayAccumulator = 0;
+			return reduction;
+		}
+
+		// Called each tick. After StackDecayDelayFrames of no parrying,
+		// stacks decay by 1 every StackDecayIntervalFrames.
+		public void TickStackDecay()
+		{
+			if (FrameAdvantageStacks <= 0) return;
+			_framesSinceLastParry++;
+			if (_framesSinceLastParry < _c.StackDecayDelayFrames) return;
+
+			_decayAccumulator++;
+			if (_decayAccumulator >= _c.StackDecayIntervalFrames)
+			{
+				FrameAdvantageStacks--;
+				_decayAccumulator = 0;
+			}
 		}
 
 		// ── Full reset (called between rounds) ─────────────────────────
 		public void FullReset()
 		{
-			Momentum = Fixed64.Zero;
+			Momentum = _c.MomentumMax / (Fixed64)2.0;
 			Composure = Fixed64.Zero;
 			Vitality = Fixed64.One;
 			FrameAdvantageStacks = 0;
+			_composureCooldownRemaining = 0;
+			_framesSinceLastParry = 0;
+			_decayAccumulator = 0;
 		}
 	}
 }

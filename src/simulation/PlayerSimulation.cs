@@ -1,76 +1,115 @@
 
 // The authoritative simulation for one player.
 // No Godot imports. No floats. No Node references.
+// PHASE 2 NOTE: The `private object _state` pattern and record-based state machine
+// will be replaced by Chickensoft LogicBlocks (v5.20.0, already imported) which provides:
+//   - Compile-time exhaustive state transitions via hierarchical statecharts
+//   - Native MemoryPack serialization for rollback snapshots
+//   - Auto-generated state diagrams
+// Until then, the object+switch pattern is intentional and functional.
+// Do NOT refactor the state representation without migrating to LogicBlocks.
+using System;
 using FixedMathSharp;
+using ResonanceOfSteel.Simulation.Archetypes;
 using ResonanceOfSteel.Simulation.States;
 
 namespace ResonanceOfSteel.Simulation
 {
-	public class PlayerSimulation
+	public sealed class PlayerSimulation
 	{
-		// The current state of this player.
+		// ── State ──────────────────────────────────────────────────────
+		// See PHASE 2 NOTE at top of file regarding LogicBlocks migration.
 		private object _state;
 
-		// All three resource systems.
+		// ── Economy ────────────────────────────────────────────────────
 		public EconomyHandler Economy { get; }
 
-		// Position in world space (Fixed64 for determinism).
+		// ── Deterministic position (synced each Tick from Bridge) ───────
 		public Fixed64 PosX { get; private set; }
 		public Fixed64 PosZ { get; private set; }
-		public Fixed64 FacingAngle { get; private set; }
 
-		// The event generated this tick (consumed by the Bridge).
+		// ── Per-tick outputs (consumed by Bridge after Tick) ────────────
 		public CombatEvent LastEvent { get; private set; }
-
-		// Whether the hitbox should be active (set during Swing state).
 		public bool HitboxActive { get; private set; }
-
-		// The current attack tier (needed by Bridge for hitbox shape selection).
 		public AttackTier CurrentTier { get; private set; }
-
-		// Whether we are in a state where Tier 3 armor is active.
 		public bool ArmorActive { get; private set; }
 
-		// Tracks how many frames ago block was last pressed (any state).
-		// Used by HitboxManager to evaluate the Shatter timing window.
+		// ── Semantic state queries (used by Bridge/CombatResolver) ──────
+		public bool IsBlocking => _state is Blocking;
+		public bool IsParrying => _state is Parrying;
+		public bool IsInDeathblow => _state is Deathblow;
+		public bool IsStaggered => _state is Staggered;
+		public bool IsSwinging => _state is Swing;
+
+		/// <summary>
+		/// True during any committed action (attacks, evasion, stagger, deathblow).
+		/// Blocks input consumption and suppresses input-driven movement (slide-to-stop).
+		/// </summary>
+		public bool IsActionLocked => _state is not (Idle or Moving or Blocking);
+
+		// ── Debug properties (read by DebugHUD via Bridge) ──────────────
+		public int DebugBufferCount => _buffer.Count;
+
+		public string DebugStateName => _state switch
+		{
+			Idle => "Idle",
+			Moving m => m.IsRunning ? "Running" : "Moving",
+			Coil c => $"Coil T{(int)c.Tier} [{c.FramesLeft}f]",
+			Swing s => $"Swing T{(int)s.Tier} [{s.FramesLeft}f]",
+			Recovery r => $"Recovery T{(int)r.Tier} [{r.FramesLeft}f]",
+			Blocking => "Blocking",
+			Parrying p => $"Parrying [{p.FramesLeft}f]",
+			Dodging d => d.StartupLeft > 0 ? $"Dodge Startup [{d.StartupLeft}f]"
+				: d.ActiveLeft > 0 ? $"Dodge Active [{d.ActiveLeft}f]"
+				: $"Dodge Recovery [{d.RecoveryLeft}f]",
+			Jumping j => j.StartupLeft > 0 ? $"Jump Startup [{j.StartupLeft}f]"
+				: j.ActiveLeft > 0 ? $"Jump Active [{j.ActiveLeft}f]"
+				: $"Jump Recovery [{j.RecoveryLeft}f]",
+			Staggered s => $"Staggered [{s.FramesLeft}f]",
+			Deathblow => "DEATHBLOW",
+			_ => "Unknown"
+		};
+
+		// ── Input buffer (owned by Simulation for rollback serialization)
+		private readonly InputBuffer _buffer;
+
+		// ── Shatter timing ─────────────────────────────────────────────
 		private int _blockPressedFramesAgo = int.MaxValue / 2;
+		public bool IsInShatterWindow => _blockPressedFramesAgo < _constants.ParryWindowFrames;
 
-		// Set by OnShatterWhiff(); applied as extra Recovery frames when the swing ends.
-		private bool _shatterWhiffRecoveryPenalty = false;
+		// ── Shatter whiff penalty ──────────────────────────────────────
+		private bool _shatterWhiffRecoveryPending;
 
-		// Parry window frame data (how long the parry state lasts).
-		private const int ParryWindowFrames = 6;
-		// -4 frame disadvantage on Shatter whiff (Framework Section 4).
-		private const int ShatterWhiffRecoveryPenaltyFrames = 4;
-
-		// Shatter window equals the parry window — same timing requirement on both sides.
-		public bool IsInShatterWindow() => _blockPressedFramesAgo <= ParryWindowFrames;
-		private const int DodgeFrames = 18;
-		private const int JumpFrames = 30;
-		private const int StaggerFrames = 20;
+		// ── Clash double-processing guard ──────────────────────────────
+		public bool ClashedThisFrame { get; private set; }
 
 		private readonly EconomyConstants _constants;
 		private readonly IArchetypeData _archetype;
+
 		public PlayerSimulation(EconomyConstants constants, IArchetypeData archetype)
 		{
 			_constants = constants;
 			_archetype = archetype;
 			Economy = new EconomyHandler(constants);
+			_buffer = new InputBuffer(constants.InputBufferTTL);
 			_state = new Idle();
 		}
 
 		// ── Main entry point ───────────────────────────────────────────
 		// Called exactly once per physics frame by the Bridge Layer.
-		// input: the buffered input for this frame.
-		// opponentPos: used for Right-of-Way Momentum calculation.
-		public void Tick(PlayerInput input, Fixed64 opponentPosX, Fixed64 opponentPosZ)
+		public void Tick(PlayerInput input)
 		{
+			// Reset per-tick outputs.
 			LastEvent = CombatEvent.None;
 			HitboxActive = false;
 			ArmorActive = false;
+			ClashedThisFrame = false;
 
-			// Track how many frames ago block was last pressed (for Shatter window detection).
-			// Uses JustPressed so holding block doesn't trivially satisfy the timing window.
+			// Sync authoritative position from Bridge.
+			PosX = input.OwnPosX;
+			PosZ = input.OwnPosZ;
+
+			// Track block press recency for Shatter window detection.
 			if (input.BlockParryJustPressed)
 				_blockPressedFramesAgo = 0;
 			else if (_blockPressedFramesAgo < int.MaxValue / 2)
@@ -79,183 +118,242 @@ namespace ResonanceOfSteel.Simulation
 			// Composure recovers every frame unless Terminal.
 			Economy.TickComposureRecovery();
 
-			// Right-of-Way Momentum: are we moving toward the opponent?
-			var movingTowardOpponent = IsMovingToward(input, opponentPosX, opponentPosZ);
-			if (movingTowardOpponent && (_state is Idle || _state is Moving))
+			// Frame Advantage Stack gradual decay.
+			Economy.TickStackDecay();
+
+			// Right-of-Way Momentum generation.
+			if (IsMovingToward(input) && (_state is Idle || _state is Moving || _state is Blocking))
 				Economy.AddRightOfWayMomentum(input.RunHeld);
 
+			// Buffer management: enqueue new presses, consume only in actionable states, then age.
+			EnqueueInputs(input);
+			var consumed = (_state is Idle or Moving) ? _buffer.Consume() : PlayerInputAction.None;
+			_buffer.Tick();
+
 			// Delegate to state-specific logic.
-			_state = ProcessState(input, _state);
+			_state = ProcessState(input, consumed);
+		}
+
+		// ── Input buffer bridge ────────────────────────────────────────
+		private void EnqueueInputs(PlayerInput input)
+		{
+			if (input.AttackJustPressed) _buffer.Add(PlayerInputAction.Attack);
+			if (input.BlockParryJustPressed) _buffer.Add(PlayerInputAction.BlockParry);
+			if (input.DodgeJustPressed) _buffer.Add(PlayerInputAction.Dodge);
+			if (input.JumpJustPressed) _buffer.Add(PlayerInputAction.Jump);
 		}
 
 		// ── State processor ────────────────────────────────────────────
-		private object ProcessState(PlayerInput input, object state)
+		private object ProcessState(PlayerInput input, PlayerInputAction consumed)
 		{
-			return state switch
+			return _state switch
 			{
-				Idle s => ProcessIdle(input, s),
-				Moving s => ProcessMoving(input, s),
-				Coil s => ProcessCoil(input, s),
-				Swing s => ProcessSwing(input, s),
-				Recovery s => ProcessRecovery(input, s),
-				Blocking s => ProcessBlocking(input, s),
-				Parrying s => ProcessParrying(input, s),
-				Dodging s => ProcessDodging(input, s),
+				Idle => ProcessIdle(input, consumed),
+				Moving => ProcessMoving(input, consumed),
+				Coil s => ProcessCoil(s),
+				Swing s => ProcessSwing(s),
+				Recovery s => ProcessRecovery(s),
+				Blocking => ProcessBlocking(input),
+				Parrying s => ProcessParrying(s),
+				Dodging s => ProcessDodging(s),
 				Jumping s => ProcessJumping(input, s),
-				Staggered s => ProcessStaggered(input, s),
-				Deathblow => new Deathblow(), // No inputs accepted in Deathblow
+				Staggered s => ProcessStaggered(s),
+				Deathblow => new Deathblow(),
+				// PHASE 2: LogicBlocks migration will make this branch unreachable
+				// via compile-time exhaustiveness. Until then, this is a safety net.
 				_ => new Idle()
 			};
 		}
 
-		// ── Individual state processors ────────────────────────────────
+		// ── Actionable state input processing ──────────────────────────
 
-		private object ProcessIdle(PlayerInput input, Idle s)
+		private object ProcessIdle(PlayerInput input, PlayerInputAction consumed)
 		{
-			// Check for movement
-			if (HasMovementInput(input)) return new Moving(input.RunHeld);
-
-			// Check for attack
-			if (input.AttackPressed) return TransitionToCoil(input.ModifierTier);
-
-			// Check for block/parry (press enters parry window; held enters block)
-			if (input.BlockParryPressed) return new Parrying(ParryWindowFrames);
-
-			// Check for dodge
-			if (input.DodgePressed && Economy.CanAfford(_constants.DodgeCost))
-			{
-				Economy.SpendMomentum(_constants.DodgeCost);
-				return new Dodging(DodgeFrames);
-			}
-
-			if (input.JumpPressed) return new Jumping(JumpFrames);
-
-			return s; // Stay Idle
+			return ProcessActionableInput(input, consumed)
+				?? (input.HasMovement ? new Moving(input.RunHeld) : (object)new Idle());
 		}
 
-		private object ProcessMoving(PlayerInput input, Moving s)
+		private object ProcessMoving(PlayerInput input, PlayerInputAction consumed)
 		{
-			if (!HasMovementInput(input)) return new Idle();
-			if (input.AttackPressed) return TransitionToCoil(input.ModifierTier);
-			if (input.BlockParryPressed) return new Parrying(ParryWindowFrames);
-			if (input.DodgePressed && Economy.CanAfford(_constants.DodgeCost))
-			{
-				Economy.SpendMomentum(_constants.DodgeCost);
-				return new Dodging(DodgeFrames);
-			}
-			if (input.JumpPressed) return new Jumping(JumpFrames);
-			return new Moving(input.RunHeld);
+			if (!input.HasMovement) return new Idle();
+			return ProcessActionableInput(input, consumed) ?? new Moving(input.RunHeld);
 		}
 
-		private object ProcessCoil(PlayerInput input, Coil s)
+		/// <summary>
+		/// Shared logic for states that accept all input (Idle, Moving).
+		/// Returns a new state if an action was consumed, or null to remain in current state.
+		/// </summary>
+		private object? ProcessActionableInput(PlayerInput input, PlayerInputAction consumed)
 		{
-			// No inputs accepted during Coil (Brief Section 5 table).
+			switch (consumed)
+			{
+				case PlayerInputAction.BlockParry:
+					if (Economy.CanAfford(_constants.PerfectParryCost))
+						return new Parrying(_constants.ParryWindowFrames);
+					return new Blocking();
+
+				case PlayerInputAction.Attack:
+					return TransitionToCoil(input.ModifierTier);
+
+				case PlayerInputAction.Dodge:
+					if (input.HasMovement && !IsMovingToward(input))
+					{
+						bool canAffordDodge = Economy.CanAfford(_constants.DodgeCost);
+						if (canAffordDodge) Economy.SpendMomentum(_constants.DodgeCost);
+						int startupPenalty = canAffordDodge ? 0 : _constants.EvasionFatigueStartupPenalty;
+						int activeReduction = canAffordDodge ? 0 : _constants.EvasionFatigueActiveReduction;
+						return new Dodging(
+							_constants.DodgeStartupFrames + startupPenalty,
+							Math.Max(1, _constants.DodgeActiveFrames - activeReduction),
+							_constants.DodgeRecoveryFrames);
+					}
+					return null;
+
+				case PlayerInputAction.Jump:
+				{
+					bool canAffordJump = Economy.CanAfford(_constants.JumpCost);
+					if (canAffordJump) Economy.SpendMomentum(_constants.JumpCost);
+					int startupPenalty = canAffordJump ? 0 : _constants.EvasionFatigueStartupPenalty;
+					int activeReduction = canAffordJump ? 0 : _constants.EvasionFatigueActiveReduction;
+					return new Jumping(
+						_constants.JumpStartupFrames + startupPenalty,
+						Math.Max(1, _constants.JumpActiveFrames - activeReduction),
+						_constants.JumpRecoveryFrames);
+				}
+
+				default:
+					if (input.BlockParryHeld)
+						return new Blocking();
+					return null;
+			}
+		}
+
+		// ── Attack phase processors ────────────────────────────────────
+
+		private object ProcessCoil(Coil s)
+		{
 			CurrentTier = s.Tier;
-			var framesLeft = s.FramesLeft - 1;
+			int framesLeft = s.FramesLeft - 1;
 			if (framesLeft <= 0)
 			{
-				// Transition to Swing with the correct frame count for this tier.
-				int swingFrames = GetSwingFrames(s.Tier);
-				return new Swing(s.Tier, swingFrames, false);
+				var move = _archetype.GetMoveData(s.Tier);
+				return new Swing(s.Tier, move.SwingFrames);
 			}
 			return s with { FramesLeft = framesLeft };
 		}
 
-		private object ProcessSwing(PlayerInput input, Swing s)
+		private object ProcessSwing(Swing s)
 		{
 			CurrentTier = s.Tier;
 			HitboxActive = true;
-			// Tier 3 armor is active during Swing frames (Brief Section 7.2).
-			ArmorActive = (s.Tier == AttackTier.Super) && !Economy.IsFatigued;
+			ArmorActive = s.Tier == AttackTier.Super && !Economy.IsFatigued;
 
-			var framesLeft = s.FramesLeft - 1;
+			int framesLeft = s.FramesLeft - 1;
 			if (framesLeft <= 0)
 			{
 				HitboxActive = false;
-				int recoveryFrames = GetRecoveryFrames(s.Tier);
-				if (_shatterWhiffRecoveryPenalty)
+				var move = _archetype.GetMoveData(s.Tier);
+				int recoveryFrames = move.RecoveryFrames;
+				if (_shatterWhiffRecoveryPending)
 				{
-					recoveryFrames += ShatterWhiffRecoveryPenaltyFrames;
-					_shatterWhiffRecoveryPenalty = false;
+					recoveryFrames += _constants.ShatterWhiffPenaltyFrames;
+					_shatterWhiffRecoveryPending = false;
 				}
 				return new Recovery(recoveryFrames, s.Tier);
 			}
 			return s with { FramesLeft = framesLeft };
 		}
 
-		private object ProcessRecovery(PlayerInput input, Recovery s)
+		private object ProcessRecovery(Recovery s)
 		{
-			// Only block_parry is accepted during Recovery (Brief Section 5).
-			if (input.BlockParryPressed) return new Blocking();
+			int framesLeft = s.FramesLeft - 1;
+			return framesLeft <= 0 ? new Idle() : s with { FramesLeft = framesLeft };
+		}
 
-			var framesLeft = s.FramesLeft - 1;
-			if (framesLeft <= 0) return new Idle();
+		// ── Defensive state processors ─────────────────────────────────
+
+		private object ProcessBlocking(PlayerInput input)
+		{
+			return input.BlockParryHeld ? new Blocking() : new Idle();
+		}
+
+		private object ProcessParrying(Parrying s)
+		{
+			int framesLeft = s.FramesLeft - 1;
+			if (framesLeft <= 0)
+				return new Blocking();
 			return s with { FramesLeft = framesLeft };
 		}
 
-		private object ProcessBlocking(PlayerInput input, Blocking s)
+		private object ProcessDodging(Dodging s)
 		{
-			if (!input.BlockParryPressed) return new Idle();
-			return s;
-		}
-
-		private object ProcessParrying(PlayerInput input, Parrying s)
-		{
-			var framesLeft = s.FramesLeft - 1;
-			if (framesLeft <= 0) return new Blocking(); // Window elapsed, now holding block
-			return s with { FramesLeft = framesLeft };
-		}
-
-		private object ProcessDodging(PlayerInput input, Dodging s)
-		{
-			// No inputs during Dodge.
-			var framesLeft = s.FramesLeft - 1;
-			if (framesLeft <= 0) return new Idle();
-			return s with { FramesLeft = framesLeft };
+			if (s.StartupLeft > 0) return s with { StartupLeft = s.StartupLeft - 1 };
+			if (s.ActiveLeft > 0) return s with { ActiveLeft = s.ActiveLeft - 1 };
+			if (s.RecoveryLeft > 0) return s with { RecoveryLeft = s.RecoveryLeft - 1 };
+			return new Idle();
 		}
 
 		private object ProcessJumping(PlayerInput input, Jumping s)
 		{
-			// No inputs during Jump (landing handled by Bridge via physics).
-			var framesLeft = s.FramesLeft - 1;
-			if (framesLeft <= 0) return new Idle();
-			return s with { FramesLeft = framesLeft };
+			if (s.StartupLeft > 0) return s with { StartupLeft = s.StartupLeft - 1 };
+			if (s.ActiveLeft > 0)
+			{
+				// Ground check during active phase — early landing skips to recovery.
+				if (input.IsGrounded) return s with { ActiveLeft = 0 };
+				return s with { ActiveLeft = s.ActiveLeft - 1 };
+			}
+			if (s.RecoveryLeft > 0) return s with { RecoveryLeft = s.RecoveryLeft - 1 };
+			return new Idle();
 		}
 
-		private object ProcessStaggered(PlayerInput input, Staggered s)
+		// ── Damage state processors ────────────────────────────────────
+
+		private object ProcessStaggered(Staggered s)
 		{
-			var framesLeft = s.FramesLeft - 1;
-			if (framesLeft <= 0) return new Idle();
-			return s with { FramesLeft = framesLeft };
+			int framesLeft = s.FramesLeft - 1;
+			return framesLeft <= 0 ? new Idle() : s with { FramesLeft = framesLeft };
 		}
 
-		// ── External event handlers (called by Bridge after hit detection) ───
+		// ── Combat event handlers (called by CombatResolver / Bridge) ──
 
-		// Called when this character's hitbox connects with the opponent.
 		public void OnHitLanded(Fixed64 vitalityMult, Fixed64 composureMult, bool wasBlocked)
 		{
 			Economy.AddMomentumOnHit();
 			LastEvent = wasBlocked ? CombatEvent.HitBlocked : CombatEvent.HitLand;
-			if (!wasBlocked)
-				Economy.ResetFrameAdvantage(); // Attacker resets stacks on successful hit
 		}
 
-		// Called when this character IS HIT (defender perspective).
-		public void OnHitReceived(Fixed64 vitalityMult, Fixed64 composureMult, bool wasBlocked)
+		public void OnHitReceived(Fixed64 vitalityMult, Fixed64 composureMult,
+			bool wasBlocked, AttackTier attackerTier, int staggerFrames)
 		{
-			Economy.ApplyVitalityDamage(vitalityMult);
-			Economy.ApplyComposureDamage(composureMult);
+			if (attackerTier == AttackTier.Light)
+			{
+				if (wasBlocked)
+					Economy.ApplyComposureDamage(composureMult);
+				else
+					Economy.ApplyVitalityDamage(vitalityMult);
+			}
+			else if (wasBlocked)
+			{
+				// Chip damage: blocked T1-T3 attacks deal 20% vitality + full composure.
+				Economy.ApplyVitalityDamage(vitalityMult * _constants.ChipDamageMultiplier);
+				Economy.ApplyComposureDamage(composureMult);
+			}
+			else
+			{
+				Economy.ApplyVitalityDamage(vitalityMult);
+				Economy.ApplyComposureDamage(composureMult);
+			}
+
 			Economy.ResetFrameAdvantage();
 
-			if (!wasBlocked)
-				_state = new Staggered(StaggerFrames);
-
-			// Check for Deathblow condition
-			if (Economy.IsDeathblowVulnerable && !wasBlocked)
+			// Deathblow triggers on ANY hit (blocked or not) once vulnerable.
+			// Vitality ≤ 0 or Composure ≥ 1.0 — blocking cannot prevent execution.
+			if (Economy.IsDeathblowVulnerable)
 				_state = new Deathblow();
+			else if (!wasBlocked && staggerFrames > 0)
+				_state = new Staggered(staggerFrames);
 		}
 
-		// Called on a successful Perfect Parry.
 		public void OnParrySuccess()
 		{
 			Economy.SpendMomentum(_constants.PerfectParryCost);
@@ -263,19 +361,19 @@ namespace ResonanceOfSteel.Simulation
 			LastEvent = CombatEvent.ParrySuccess;
 		}
 
-		// Called on Deathblow execution
 		public void OnDeathblowTriggered()
 		{
 			LastEvent = CombatEvent.DeathblowTriggered;
 			_state = new Deathblow();
 		}
 
-		// Called on a Clash (both attacks same tier simultaneously).
 		public void OnClash()
 		{
+			if (ClashedThisFrame) return;
+			ClashedThisFrame = true;
 			Economy.AddClashSurge();
 			LastEvent = CombatEvent.ClashEvent;
-			_state = new Recovery(8, CurrentTier); // Short recovery after clash
+			_state = new Recovery(_constants.ClashRecoveryFrames, CurrentTier);
 		}
 
 		public bool TryInitiateShatter()
@@ -285,8 +383,6 @@ namespace ResonanceOfSteel.Simulation
 			return true;
 		}
 
-		// Called when this character's Shatter lands (parry was broken).
-		// Mirrors OnHitLanded but fires ShatterEvent instead of HitLand.
 		public void OnShatterLanded()
 		{
 			Economy.AddMomentumOnHit();
@@ -294,14 +390,14 @@ namespace ResonanceOfSteel.Simulation
 			LastEvent = CombatEvent.ShatterEvent;
 		}
 
-		// Called when Shatter was attempted but the defender used Standard Block instead of Parry.
-		// Per Framework Section 4: block occurs normally, attacker loses Momentum and suffers
-		// a -4 frame Recovery penalty (disadvantage) on the current swing.
+		/// <summary>
+		/// Shatter whiff: defender was not Parrying when shatter-modified hit landed.
+		/// Cost was already paid via TryInitiateShatter (3.0 Momentum).
+		/// The only additional punishment is the recovery frame penalty.
+		/// </summary>
 		public void OnShatterWhiff()
 		{
-			// Unconditional drain — the full cost is extracted even if Momentum runs out.
-			Economy.SpendMomentum(_constants.ShatterCost);
-			_shatterWhiffRecoveryPenalty = true;
+			_shatterWhiffRecoveryPending = true;
 			LastEvent = CombatEvent.ShatterWhiff;
 		}
 
@@ -309,39 +405,36 @@ namespace ResonanceOfSteel.Simulation
 
 		private object TransitionToCoil(AttackTier tier)
 		{
-			Economy.ResetFrameAdvantage(); // Attacking resets stacks (Brief Section 6.3)
-			int coilFrames = GetCoilFrames(tier);
-			int reduction = Economy.GetFrameAdvantageCoilReduction();
-			int effective = System.Math.Max(1, coilFrames - reduction);
+			var move = _archetype.GetMoveData(tier);
+			// ConsumeFrameAdvantageCoilReduction only resets stacks if threshold was met.
+			// Attacking without enough stacks preserves them.
+			int reduction = Economy.ConsumeFrameAdvantageCoilReduction();
+			int effective = Math.Max(1, move.CoilFrames - reduction);
 			CurrentTier = tier;
-			return new Coil(tier, effective, reduction > 0);
+			return new Coil(tier, effective);
 		}
 
-		private bool HasMovementInput(PlayerInput input)
-			=> input.MoveX != Fixed64.Zero || input.MoveZ != Fixed64.Zero;
-
-		private bool IsMovingToward(PlayerInput input, Fixed64 oppX, Fixed64 oppZ)
+		private bool IsMovingToward(PlayerInput input)
 		{
-			var dx = oppX - PosX;
-			var dz = oppZ - PosZ;
-			// Dot product of movement direction and direction-to-opponent
-			return (input.MoveX * dx + input.MoveZ * dz) > Fixed64.Zero;
+			var dx = input.OpponentPosX - PosX;
+			var dz = input.OpponentPosZ - PosZ;
+			var dot = input.MoveX * dx + input.MoveZ * dz;
+			// Require meaningful forward component to prevent strafing exploit.
+			// Dot product of two unit vectors: 0.5 ≈ 60° cone toward opponent.
+			var distSq = dx * dx + dz * dz;
+			if (distSq <= Fixed64.Zero) return false;
+			// dot / sqrt(distSq) gives the cosine of the angle (moveDir is already normalized).
+			// threshold² * distSq avoids the sqrt: dot² > threshold² * distSq
+			var threshold = (Fixed64)0.5;
+			return dot > Fixed64.Zero && dot * dot > threshold * threshold * distSq;
 		}
 
-		// Returns Coil frame count for this tier based on which archetype.
-		private int GetCoilFrames(AttackTier tier) => _archetype.GetCoilFrames(tier);
-		private int GetSwingFrames(AttackTier tier) => _archetype.GetSwingFrames(tier);
-		private int GetRecoveryFrames(AttackTier tier) => _archetype.GetRecoveryFrames(tier);
-
-		// Returns the current state type name (for debugging and UI).
-		public string GetStateName() => _state?.GetType().Name ?? "Unknown";
-
-		// Called by Bridge to reset simulation state between rounds.
 		public void ResetState()
 		{
 			_state = new Idle();
 			_blockPressedFramesAgo = int.MaxValue / 2;
-			_shatterWhiffRecoveryPenalty = false;
+			_shatterWhiffRecoveryPending = false;
+			_buffer.Clear();
 		}
 	}
 }

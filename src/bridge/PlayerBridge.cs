@@ -1,5 +1,4 @@
-
-// The Godot-facing layer. Polls input, calls simulation Tick(), applies movement.
+// The Godot-facing conduit layer. Polls input, calls simulation Tick(), applies movement.
 // This IS allowed to use Godot types. It must NOT contain combat logic.
 using Godot;
 using FixedMathSharp;
@@ -9,32 +8,53 @@ using ResonanceOfSteel.Bridge.Archetypes;
 
 namespace ResonanceOfSteel.Bridge
 {
-	public partial class PlayerBridge : CharacterBody3D
+	public sealed partial class PlayerBridge : CharacterBody3D
 	{
 		// ── Inspector-adjustable economy constants (Brief Section 11.2) ───
+		[ExportGroup("Economy")]
+		[Export] public float MomentumMax = 8.0f;
+		[Export] public float PerfectParryCost = 0.5f;
+		[Export] public float DodgeCost = 1.5f;
+		[Export] public float JumpCost = 1.0f;
+		[Export] public float ShatterCost = 3.0f;
 		[Export] public float BaseMomentumOnHit = 0.5f;
 		[Export] public float WalkMomentumRate = 0.05f;
 		[Export] public float RunMomentumRate = 0.1f;
 		[Export] public float ClashMomentumSurge = 2.0f;
-		[Export] public float ComposureRecoveryRate = 0.02f;
+		[Export] public float ComposureRecoveryRate = 0.0036f;
+		[Export] public int ComposureRecoveryCooldownFrames = 90;
 		[Export] public float TerminalVitalityThreshold = 0.1f;
 		[Export] public float BaseVitalityDamage = 0.08f;
 		[Export] public float BaseComposureDamage = 0.06f;
+		[Export] public float ChipDamageMultiplier = 0.2f;
 		[Export] public float ArmorTradeLethality = 1.5f;
-		[Export] public int FrameAdvantageThreshold = 3;
-		[Export] public int FrameAdvantageOffset = 3;
+		[Export] public float StaggerKnockbackMultiplier = 0.2f;
+		[Export] public int FrameAdvantageOffset = 1;
+		[Export] public int StackDecayDelayFrames = 180;
+		[Export] public int StackDecayIntervalFrames = 60;
+
+		[ExportGroup("Frame Constants")]
+		[Export] public int ParryWindowFrames = 6;
+		[Export] public int DodgeStartupFrames = 3;
+		[Export] public int DodgeActiveFrames = 12;
+		[Export] public int DodgeRecoveryFrames = 3;
+		[Export] public int JumpStartupFrames = 3;
+		[Export] public int JumpActiveFrames = 22;
+		[Export] public int JumpRecoveryFrames = 5;
+		[Export] public int EvasionFatigueStartupPenalty = 4;
+		[Export] public int EvasionFatigueActiveReduction = 4;
+		[Export] public int ClashRecoveryFrames = 8;
+		[Export] public int ShatterWhiffPenaltyFrames = 20;
+		[Export] public int InputBufferTTL = 6;
+
+		[ExportGroup("Setup")]
 		[Export] public ArchetypeType Archetype = ArchetypeType.Longsword;
 		[Export] public HitboxManager ActiveHitboxManager;
-		[Export] public float FatigueRecoveryMultiplier = 1.5f;
-		// ── Movement constants ──────────────────────────────────────────
 		[Export] public float WalkSpeed = 4.0f;
 		[Export] public float RunSpeed = 7.0f;
-		[Export] public Node3D CameraPivot; // Wire to Player's CameraPivot in inspector
-
-		// ── Which player this bridge controls ───────────────────────────
-		// 0 = Player 1 (uses default action names)
-		// 1 = Player 2 (uses _p2 suffix action names, added in Phase 7)
+		[Export] public Node3D CameraPivot;
 		[Export] public int PlayerIndex = 0;
+		[Export] public float BoundaryPushbackStrength = 5.0f;
 
 		// ── Signals emitted to the Presentation Layer ───────────────────
 		[Signal] public delegate void HitLandedEventHandler();
@@ -49,27 +69,32 @@ namespace ResonanceOfSteel.Bridge
 
 		// ── Internal references ─────────────────────────────────────────
 		private PlayerSimulation _sim;
-		private InputBuffer _buffer;
 		private bool _wasFatigued;
+		private bool _actionNamesCached;
 
-		// The opponent bridge (set externally by the match manager in Phase 9).
+		// Cached action name strings to avoid per-frame string interpolation.
+		private string _moveLeft, _moveRight, _moveUp, _moveDown;
+		private string _attack, _blockParry, _dodge, _jump, _run;
+		private string _modLight, _modHeavy, _modSuper;
+
+		// Converts integer KnockbackDistance from MoveData to world-space displacement.
+		private const float KnockbackScale = 0.1f;
+
+		// When true, _PhysicsProcess is a no-op; GameCoordinator drives the phases.
+		private bool _coordinatorDriven;
+
+		// Pending knockback velocity for smooth application over multiple frames.
+		private Vector3 _knockbackVelocity;
+
 		public PlayerBridge Opponent { get; set; }
-
-		// Expose these so HitboxManager can grab them during _Ready or from the Coordinator
 		public IArchetypeData ArchetypeData { get; private set; }
 		public IArchetypeVisuals ArchetypeVisuals { get; private set; }
 
 		public override void _Ready()
 		{
-			// 1. Instantiate the polymorphic archetype classes
 			InitializeArchetype();
+			_sim = new PlayerSimulation(BuildConstants(), ArchetypeData);
 
-			// 2. Initialize simulation and input buffer
-			var constants = BuildConstants();
-			_sim = new PlayerSimulation(constants, ArchetypeData);
-			_buffer = new InputBuffer();
-
-			// 3. Inject dependencies into the HitboxManager (if linked in inspector/coordinator)
 			if (ActiveHitboxManager != null)
 			{
 				ActiveHitboxManager.ArchetypeVisuals = ArchetypeVisuals;
@@ -85,112 +110,175 @@ namespace ResonanceOfSteel.Bridge
 		{
 			if (Archetype == ArchetypeType.Greatsword)
 			{
-				ArchetypeData = new GreatswordData();
-				ArchetypeVisuals = new GreatswordVisuals();
+				ArchetypeData = GreatswordData.Instance;
+				ArchetypeVisuals = GreatswordVisuals.Instance;
 			}
 			else
 			{
-				ArchetypeData = new LongswordData();
-				ArchetypeVisuals = new LongswordVisuals();
+				ArchetypeData = LongswordData.Instance;
+				ArchetypeVisuals = LongswordVisuals.Instance;
 			}
 		}
+
+		private void CacheActionNames()
+		{
+			var p = PlayerIndex == 0 ? "" : "_p2";
+			_moveLeft = $"move_left{p}";
+			_moveRight = $"move_right{p}";
+			_moveUp = $"move_up{p}";
+			_moveDown = $"move_down{p}";
+			_attack = $"attack{p}";
+			_blockParry = $"block_parry{p}";
+			_dodge = $"dodge{p}";
+			_jump = $"jump{p}";
+			_run = $"run{p}";
+			_modLight = $"modifier_light{p}";
+			_modHeavy = $"modifier_heavy{p}";
+			_modSuper = $"modifier_super{p}";
+		}
+
+		/// <summary>
+		/// Called by GameCoordinator to disable independent _PhysicsProcess.
+		/// When coordinator-driven, TickPhase/ResolvePhase are called explicitly.
+		/// </summary>
+		public void SetCoordinatorDriven() => _coordinatorDriven = true;
 
 		public override void _PhysicsProcess(double delta)
 		{
-			// 1. Tick the input buffer (decrement TTLs).
-			_buffer.Tick();
+			if (_coordinatorDriven) return;
 
-			// 2. Poll hardware input and add new presses to buffer.
-			PollHardwareInput();
+			// Fallback for standalone testing without a coordinator.
+			TickPhase(delta);
+			ResolvePhase();
+		}
 
-			// 3. Build this frame's PlayerInput.
-			var input = BuildPlayerInput();
-
-			// 4. Calculate opponent position (restored missing logic)
-			var oppX = Opponent != null ? (Fixed64)(double)Opponent.GlobalPosition.X : (Fixed64)0;
-			var oppZ = Opponent != null ? (Fixed64)(double)Opponent.GlobalPosition.Z : (Fixed64)0;
-
-			// 5. Tick the simulation.
-			_sim.Tick(input, oppX, oppZ);
-
-			// 6. Apply movement from simulation state.
-			ApplyMovement(input, delta);
-			FaceOpponent(delta);
-			ApplyBoundaryPushback();
-
-			// 7. DETERMINISTIC EXECUTION: Command the hitbox check right now
-			if (ActiveHitboxManager != null)
+		/// <summary>
+		/// Phase 1: Sample input, advance simulation, apply movement.
+		/// Both players complete this phase before any hitbox resolution.
+		/// </summary>
+		public void TickPhase(double delta)
+		{
+			if (!_actionNamesCached)
 			{
-				ActiveHitboxManager.ProcessHitboxes();
+				CacheActionNames();
+				_actionNamesCached = true;
 			}
 
-			// 8. Emit signals based on events from the simulation.
+			var input = BuildPlayerInput();
+			_sim.Tick(input);
+
+			ApplyMovement(input, delta);
+			FaceOpponent();
+			ApplyBoundaryPushback();
+		}
+
+		/// <summary>
+		/// Phase 2: Hitbox queries and combat event emission.
+		/// Runs after both players have ticked, ensuring symmetric state.
+		/// </summary>
+		public void ResolvePhase()
+		{
+			ActiveHitboxManager?.ProcessHitboxes();
 			EmitCombatEvents();
 		}
-		// ── Input polling ───────────────────────────────────────────────
-		private void PollHardwareInput()
-		{
-			var p = PlayerIndex == 0 ? "" : "_p2";
 
-			if (Input.IsActionJustPressed($"attack{p}")) _buffer.Add(PlayerInputAction.Attack);
-			if (Input.IsActionJustPressed($"block_parry{p}")) _buffer.Add(PlayerInputAction.BlockParry);
-			if (Input.IsActionJustPressed($"dodge{p}")) _buffer.Add(PlayerInputAction.Dodge);
-			if (Input.IsActionJustPressed($"jump{p}")) _buffer.Add(PlayerInputAction.Jump);
-		}
-
+		// ── Input sampling ──────────────────────────────────────────────
+		// Raw hardware state — the Simulation's InputBuffer handles buffering/consumption.
 		private PlayerInput BuildPlayerInput()
 		{
-			var p = PlayerIndex == 0 ? "" : "_p2";
+			// Raw stick axes — camera-relative, not world-space.
+			var rawMx = Input.GetAxis(_moveLeft, _moveRight);
+			var rawMz = Input.GetAxis(_moveUp, _moveDown);
 
-			var mx = (Fixed64)(double)(Input.GetAxis($"move_left{p}", $"move_right{p}"));
-			var mz = (Fixed64)(double)(Input.GetAxis($"move_up{p}", $"move_down{p}"));
-			var runHeld = Input.IsActionPressed($"run{p}");
+			// Transform to world-space direction so IsMovingToward (RoW, dodge) works correctly.
+			float worldMoveX = 0f, worldMoveZ = 0f;
+			if (!Mathf.IsZeroApprox(rawMx) || !Mathf.IsZeroApprox(rawMz))
+			{
+				var basis = CameraPivot != null
+					? CameraPivot.GlobalTransform.Basis
+					: Basis.Identity;
+				var camForward = new Vector3(-basis.Z.X, 0, -basis.Z.Z).Normalized();
+				var camRight = new Vector3(basis.X.X, 0, basis.X.Z).Normalized();
+				var moveDir = (camForward * -rawMz + camRight * rawMx).Normalized();
+				worldMoveX = moveDir.X;
+				worldMoveZ = moveDir.Z;
+			}
 
-			// Determine modifier tier from held buttons at moment of attack.
-			// Only matters when Attack is the consumed input.
-			var tier = AttackTier.Standard; // Default: no modifier = Standard (Tier 1)
-			if (Input.IsActionPressed($"modifier_light{p}")) tier = AttackTier.Light;
-			if (Input.IsActionPressed($"modifier_heavy{p}")) tier = AttackTier.Heavy;
-			if (Input.IsActionPressed($"modifier_super{p}")) tier = AttackTier.Super;
+			var mx = (Fixed64)(double)worldMoveX;
+			var mz = (Fixed64)(double)worldMoveZ;
 
-			// Consume the highest-priority buffered input for this frame.
-			var consumed = _buffer.Consume();
+			var tier = AttackTier.Standard;
+			if (Input.IsActionPressed(_modLight)) tier = AttackTier.Light;
+			if (Input.IsActionPressed(_modHeavy)) tier = AttackTier.Heavy;
+			if (Input.IsActionPressed(_modSuper)) tier = AttackTier.Super;
+
+			var ownX = (Fixed64)(double)GlobalPosition.X;
+			var ownZ = (Fixed64)(double)GlobalPosition.Z;
+			var oppX = Opponent != null ? (Fixed64)(double)Opponent.GlobalPosition.X : Fixed64.Zero;
+			var oppZ = Opponent != null ? (Fixed64)(double)Opponent.GlobalPosition.Z : Fixed64.Zero;
 
 			return new PlayerInput(
-				MoveX: mx,
-				MoveZ: mz,
-				RunHeld: runHeld,
-				AttackPressed: consumed == PlayerInputAction.Attack,
-				BlockParryPressed: consumed == PlayerInputAction.BlockParry
-								|| Input.IsActionPressed($"block_parry{p}"),
-				BlockParryJustPressed: consumed == PlayerInputAction.BlockParry,
-				DodgePressed: consumed == PlayerInputAction.Dodge,
-				JumpPressed: consumed == PlayerInputAction.Jump,
-				ModifierTier: tier
+				moveX: mx,
+				moveZ: mz,
+				runHeld: Input.IsActionPressed(_run),
+				attackJustPressed: Input.IsActionJustPressed(_attack),
+				blockParryHeld: Input.IsActionPressed(_blockParry),
+				blockParryJustPressed: Input.IsActionJustPressed(_blockParry),
+				dodgeJustPressed: Input.IsActionJustPressed(_dodge),
+				jumpJustPressed: Input.IsActionJustPressed(_jump),
+				modifierTier: tier,
+				isGrounded: IsOnFloor(),
+				ownPosX: ownX,
+				ownPosZ: ownZ,
+				opponentPosX: oppX,
+				opponentPosZ: oppZ
 			);
 		}
 
 		// ── Movement application ────────────────────────────────────────
+		// Friction factor for slide-to-stop during committed actions.
+		private const float ActionLockFriction = 0.85f;
+
 		private void ApplyMovement(PlayerInput input, double delta)
 		{
-			if (input.MoveX != Fixed64.Zero || input.MoveZ != Fixed64.Zero)
+			bool knockbackActive = _knockbackVelocity.LengthSquared() > 1.0f;
+
+			if (_sim.IsInDeathblow || _sim.IsStaggered)
 			{
-				float speed = (bool)input.RunHeld ? RunSpeed : WalkSpeed;
-
-				// Build camera-relative move direction from the pivot's basis.
-				var basis = CameraPivot != null ? CameraPivot.GlobalTransform.Basis
-													: Basis.Identity;
-				var camForward = new Vector3(-basis.Z.X, 0, -basis.Z.Z).Normalized();
-				var camRight = new Vector3(basis.X.X, 0, basis.X.Z).Normalized();
-
-				var moveDir = (camForward * -(float)input.MoveZ
-							 + camRight * (float)input.MoveX).Normalized();
-
+				// Deathblow/Staggered: complete halt (knockback still applies via overlay).
+				Velocity = Vector3.Zero;
+			}
+			else if (_sim.IsActionLocked)
+			{
+				// Committed action: slide to stop from prior velocity.
+				var slide = new Vector3(Velocity.X, 0, Velocity.Z) * ActionLockFriction;
+				Velocity = slide.LengthSquared() < 0.01f ? Vector3.Zero : slide;
+			}
+			else if (knockbackActive)
+			{
+				// Active knockback during non-locked state: suppress input movement.
+				Velocity = Vector3.Zero;
+			}
+			else if (input.HasMovement)
+			{
+				float speed = input.RunHeld ? RunSpeed : WalkSpeed;
+				var moveDir = new Vector3((float)input.MoveX, 0, (float)input.MoveZ);
 				Velocity = moveDir * speed;
 			}
 			else
 			{
 				Velocity = Vector3.Zero;
+			}
+
+			// Blend in pending knockback velocity and decay it.
+			if (_knockbackVelocity.LengthSquared() > 0.01f)
+			{
+				Velocity += _knockbackVelocity;
+				_knockbackVelocity *= 0.75f;
+			}
+			else
+			{
+				_knockbackVelocity = Vector3.Zero;
 			}
 
 			MoveAndSlide();
@@ -201,23 +289,16 @@ namespace ResonanceOfSteel.Bridge
 			for (int i = 0; i < GetSlideCollisionCount(); i++)
 			{
 				var collision = GetSlideCollision(i);
-				var collider = collision.GetCollider() as Node;
-
-				if (collider != null && collider.IsInGroup("boundary"))
+				if (collision.GetCollider() is Node collider && collider.IsInGroup("boundary"))
 				{
-					// Apply a normal-based nudge to prevent wall-clinging
-					// Using the collision normal ensures we push directly away from the wall face
-					Velocity += collision.GetNormal() * 5.0f;
-
-					// Re-run MoveAndSlide briefly to apply the nudge immediately
+					Velocity += collision.GetNormal() * BoundaryPushbackStrength;
 					MoveAndSlide();
 					break;
 				}
 			}
 		}
 
-		// -- Always face opponent -──────────────────────────────────────
-		private void FaceOpponent(double delta)
+		private void FaceOpponent()
 		{
 			if (Opponent == null) return;
 
@@ -229,10 +310,7 @@ namespace ResonanceOfSteel.Bridge
 			float current = GlobalRotation.Y;
 			float diff = Mathf.AngleDifference(current, targetYaw);
 
-			GlobalRotation = GlobalRotation with
-			{
-				Y = current + diff
-			};
+			GlobalRotation = GlobalRotation with { Y = current + diff };
 		}
 
 		// ── Event emission ──────────────────────────────────────────────
@@ -255,81 +333,102 @@ namespace ResonanceOfSteel.Bridge
 			_wasFatigued = isFatigued;
 		}
 
-		// ── Public accessors (read by Presentation and HUD) ─────────────
+		// ── Public accessors (read by Presentation/HUD/HitboxManager) ───
 		public float GetVitality() => (float)_sim.Economy.Vitality;
 		public float GetComposure() => (float)_sim.Economy.Composure;
 		public float GetMomentum() => (float)_sim.Economy.Momentum;
 		public int GetFrameAdvantageStacks() => _sim.Economy.FrameAdvantageStacks;
-		public string GetStateName() => _sim.GetStateName();
 		public bool IsHitboxActive() => _sim.HitboxActive;
 		public bool IsArmorActive() => _sim.ArmorActive;
 		public AttackTier GetCurrentTier() => _sim.CurrentTier;
+		public Fixed64 GetArmorTradeLethality() => (Fixed64)(double)ArmorTradeLethality;
 
-		// Called by the HitboxManager in Phase 5 when a hit is resolved.
-		public void ReceiveHit(Fixed64 vMult, Fixed64 cMult, bool blocked)
-		{
-			_sim.OnHitReceived(vMult, cMult, blocked);
-		}
+		// ── Semantic state queries (replace string-based checks) ────────
+		public bool IsBlocking() => _sim.IsBlocking;
+		public bool IsParrying() => _sim.IsParrying;
+		public bool IsInDeathblow() => _sim.IsInDeathblow;
 
-		// Called by the HitboxManager when this player's hit landed.
-		public void NotifyHitLanded(Fixed64 vMult, Fixed64 cMult, bool blocked)
-		{
-			_sim.OnHitLanded(vMult, cMult, blocked);
-		}
+		// ── Debug accessors (read by DebugHUD) ─────────────────────────
+		public string GetDebugStateName() => _sim.DebugStateName;
+		public int GetDebugBufferCount() => _sim.DebugBufferCount;
+		public bool GetIsFatigued() => _sim.Economy.IsFatigued;
+		public bool GetIsTerminal() => _sim.Economy.IsTerminal;
+		public bool GetIsDeathblowVulnerable() => _sim.Economy.IsDeathblowVulnerable;
+		public bool GetIsActionLocked() => _sim.IsActionLocked;
+		public bool GetIsArmorActive() => _sim.ArmorActive;
+		public string GetArchetypeName() => Archetype.ToString();
+		public string GetLastEventName() => _sim.LastEvent.ToString();
 
-		public void NotifyParrySuccess()
-		{
-			_sim.OnParrySuccess();
-			EmitSignal(SignalName.ParrySuccess);
-		}
-
-		public void NotifyDeathblowTriggered()
-		{
-			_sim.OnDeathblowTriggered();
-		}
-
-		// Returns true if block was pressed within the Shatter contact window.
-		public bool IsInShatterWindow() => _sim.IsInShatterWindow();
-
-		// Spends Shatter momentum cost. Returns false if unaffordable.
+		// ── Shatter / Clash API ─────────────────────────────────────────
+		public bool IsInShatterWindow() => _sim.IsInShatterWindow;
 		public bool TryInitiateShatter() => _sim.TryInitiateShatter();
+		public bool IsClashedThisFrame() => _sim.ClashedThisFrame;
 
-		// Called when this player's Shatter breaks the opponent's parry.
+		// ── Combat event notifications (called by HitboxManager) ────────
+		public void ReceiveHit(Fixed64 vMult, Fixed64 cMult, bool blocked,
+			AttackTier attackerTier, int staggerFrames)
+			=> _sim.OnHitReceived(vMult, cMult, blocked, attackerTier, staggerFrames);
+
+		public void NotifyHitLanded(Fixed64 vMult, Fixed64 cMult, bool blocked)
+			=> _sim.OnHitLanded(vMult, cMult, blocked);
+
+		public void NotifyParrySuccess() => _sim.OnParrySuccess();
+		public void NotifyDeathblowTriggered() => _sim.OnDeathblowTriggered();
 		public void NotifyShatterLanded() => _sim.OnShatterLanded();
-
-		// Called when this player's Shatter whiffed because the opponent Standard Blocked.
 		public void NotifyShatterWhiff() => _sim.OnShatterWhiff();
+		public void NotifyClash() => _sim.OnClash();
+
+		public void ApplyKnockback(Vector3 direction, float distance)
+		{
+			// Convert displacement to velocity impulse. Decays over several frames in ApplyMovement.
+			_knockbackVelocity += direction * distance * KnockbackScale * 60f;
+		}
 
 		// ── Reset (called between rounds) ───────────────────────────────
 		public void FullReset(Vector3 spawnPosition)
 		{
 			_sim.Economy.FullReset();
 			_sim.ResetState();
-			_buffer.Clear();
 			GlobalPosition = spawnPosition;
 			Velocity = Vector3.Zero;
+			_knockbackVelocity = Vector3.Zero;
 			_wasFatigued = false;
 		}
 
 		// ── Builds EconomyConstants from exported inspector values ───────
 		private EconomyConstants BuildConstants() => new(
-			MomentumMax: (Fixed64)8.0,
-			PerfectParryCost: (Fixed64)0.5,
-			DodgeCost: (Fixed64)1.5,
-			ShatterCost: (Fixed64)3.0,
+			MomentumMax: (Fixed64)(double)MomentumMax,
+			PerfectParryCost: (Fixed64)(double)PerfectParryCost,
+			DodgeCost: (Fixed64)(double)DodgeCost,
+			JumpCost: (Fixed64)(double)JumpCost,
+			ShatterCost: (Fixed64)(double)ShatterCost,
 			BaseMomentumOnHit: (Fixed64)(double)BaseMomentumOnHit,
 			WalkMomentumRate: (Fixed64)(double)WalkMomentumRate,
 			RunMomentumRate: (Fixed64)(double)RunMomentumRate,
 			ClashMomentumSurge: (Fixed64)(double)ClashMomentumSurge,
 			ComposureBaseRecoveryRate: (Fixed64)(double)ComposureRecoveryRate,
+			ComposureRecoveryCooldownFrames: ComposureRecoveryCooldownFrames,
 			TerminalVitalityThreshold: (Fixed64)(double)TerminalVitalityThreshold,
 			BaseVitalityDamage: (Fixed64)(double)BaseVitalityDamage,
 			BaseComposureDamage: (Fixed64)(double)BaseComposureDamage,
-			FrameAdvantageThreshold: FrameAdvantageThreshold,
+			ChipDamageMultiplier: (Fixed64)(double)ChipDamageMultiplier,
 			FrameAdvantageOffset: FrameAdvantageOffset,
+			StackDecayDelayFrames: StackDecayDelayFrames,
+			StackDecayIntervalFrames: StackDecayIntervalFrames,
 			ArmorTradeLethality: (Fixed64)(double)ArmorTradeLethality,
-			FatigueRecoveryMultiplier: (Fixed64)(double)FatigueRecoveryMultiplier
+			StaggerKnockbackMultiplier: (Fixed64)(double)StaggerKnockbackMultiplier,
+			ParryWindowFrames: ParryWindowFrames,
+			DodgeStartupFrames: DodgeStartupFrames,
+			DodgeActiveFrames: DodgeActiveFrames,
+			DodgeRecoveryFrames: DodgeRecoveryFrames,
+			JumpStartupFrames: JumpStartupFrames,
+			JumpActiveFrames: JumpActiveFrames,
+			JumpRecoveryFrames: JumpRecoveryFrames,
+			EvasionFatigueStartupPenalty: EvasionFatigueStartupPenalty,
+			EvasionFatigueActiveReduction: EvasionFatigueActiveReduction,
+			ClashRecoveryFrames: ClashRecoveryFrames,
+			ShatterWhiffPenaltyFrames: ShatterWhiffPenaltyFrames,
+			InputBufferTTL: InputBufferTTL
 		);
 	}
 }
-

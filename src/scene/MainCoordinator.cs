@@ -2,7 +2,7 @@ using Godot;
 
 namespace ResonanceOfSteel.Scene
 {
-	public partial class MainCoordinator : Node
+	public sealed partial class MainCoordinator : Node
 	{
 		public override void _Ready()
 		{

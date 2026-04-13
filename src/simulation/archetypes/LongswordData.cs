@@ -1,44 +1,35 @@
-// src/simulation/Archetypes/LongswordData.cs
 using FixedMathSharp;
 
 namespace ResonanceOfSteel.Simulation.Archetypes
 {
-	public class LongswordData : IArchetypeData
+	public sealed class LongswordData : IArchetypeData
 	{
-		public int GetCoilFrames(AttackTier tier) => tier switch
-		{
-			AttackTier.Light => 4,
-			AttackTier.Standard => 8,
-			AttackTier.Heavy => 16,
-			AttackTier.Super => 24,
-			_ => 8
-		};
+		public static readonly LongswordData Instance = new();
+		private LongswordData() { }
 
-		public int GetSwingFrames(AttackTier tier) => tier switch
+		public MoveData GetMoveData(AttackTier tier) => tier switch
 		{
-			AttackTier.Light => 2,
-			AttackTier.Standard => 4,
-			AttackTier.Heavy => 6,
-			AttackTier.Super => 8,
-			_ => 4
-		};
+			AttackTier.Light => new MoveData(
+				coilFrames: 4, swingFrames: 2, recoveryFrames: 4,
+				staggerFrames: 0, knockbackDistance: 0,
+				vitalityMultiplier: (Fixed64)0.2, composureMultiplier: (Fixed64)0.1),
 
-		public int GetRecoveryFrames(AttackTier tier) => tier switch
-		{
-			AttackTier.Light => 4,
-			AttackTier.Standard => 6,
-			AttackTier.Heavy => 10,
-			AttackTier.Super => 13,
-			_ => 6
-		};
+			AttackTier.Standard => new MoveData(
+				coilFrames: 8, swingFrames: 4, recoveryFrames: 6,
+				staggerFrames: 12, knockbackDistance: 2,
+				vitalityMultiplier: Fixed64.One, composureMultiplier: Fixed64.One),
 
-		public (Fixed64 V, Fixed64 C) GetDamageMultipliers(AttackTier tier) => tier switch
-		{
-			AttackTier.Light => ((Fixed64)0.2f, (Fixed64)0.1f),
-			AttackTier.Standard => ((Fixed64)1.0f, (Fixed64)1.0f),
-			AttackTier.Heavy => ((Fixed64)1.5f, (Fixed64)1.75f),
-			AttackTier.Super => ((Fixed64)2.0f, (Fixed64)2.0f),
-			_ => (Fixed64.One, Fixed64.One)
+			AttackTier.Heavy => new MoveData(
+				coilFrames: 16, swingFrames: 6, recoveryFrames: 10,
+				staggerFrames: 18, knockbackDistance: 4,
+				vitalityMultiplier: (Fixed64)1.5, composureMultiplier: (Fixed64)1.75),
+
+			AttackTier.Super => new MoveData(
+				coilFrames: 24, swingFrames: 8, recoveryFrames: 13,
+				staggerFrames: 25, knockbackDistance: 6,
+				vitalityMultiplier: (Fixed64)2.0, composureMultiplier: (Fixed64)2.0),
+
+			_ => GetMoveData(AttackTier.Standard)
 		};
 	}
 }

@@ -4,10 +4,13 @@
     <TargetFramework>net8.0</TargetFramework>
     <TargetFramework Condition=" '$(GodotTargetPlatform)' == 'android' ">net9.0</TargetFramework>
     <EnableDynamicLoading>true</EnableDynamicLoading>
+    <IsTestProject>true</IsTestProject>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Chickensoft.LogicBlocks" Version="5.20.0" />
     <PackageReference Include="Chickensoft.LogicBlocks.DiagramGenerator" Version="5.20.0" PrivateAssets="all" OutputItemType="analyzer" />
     <PackageReference Include="FixedMathSharp" Version="2.1.1" />
+    <PackageReference Include="gdUnit4.api" Version="5.0.0" />
+    <PackageReference Include="gdUnit4.test.adapter" Version="3.0.0" />
   </ItemGroup>
 </Project>

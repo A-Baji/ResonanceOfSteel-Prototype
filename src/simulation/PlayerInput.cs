@@ -2,36 +2,57 @@ using FixedMathSharp;
 
 namespace ResonanceOfSteel.Simulation
 {
-	// AttackTier maps to the modifier buttons defined in the Prototype Brief Section 4.
-	// None means no modifier was held when attack was pressed.
-	public enum AttackTier { Light, Standard, Heavy, Super }
-
-	// PlayerInputAction is what gets stored in the TTL input buffer.
-	// See Prototype Brief Section 4.2 for priority ordering.
-	public enum PlayerInputAction
+	/// <summary>
+	/// Per-frame input state sampled by the Bridge.
+	/// MoveX/MoveZ are world-space direction (camera-transformed, normalized) — not raw axes.
+	/// The Simulation owns the InputBuffer and performs its own consumption.
+	/// "JustPressed" fields are edge-detected (true only on the frame the button transitions to pressed).
+	/// </summary>
+	public readonly struct PlayerInput
 	{
-		None,
-		Attack,
-		BlockParry,
-		Dodge,
-		Jump,
-		Run,
+		public readonly Fixed64 MoveX;
+		public readonly Fixed64 MoveZ;
+		public readonly bool RunHeld;
+		public readonly bool AttackJustPressed;
+		public readonly bool BlockParryHeld;
+		public readonly bool BlockParryJustPressed;
+		public readonly bool DodgeJustPressed;
+		public readonly bool JumpJustPressed;
+		public readonly AttackTier ModifierTier;
+		public readonly bool IsGrounded;
+		public readonly Fixed64 OwnPosX;
+		public readonly Fixed64 OwnPosZ;
+		public readonly Fixed64 OpponentPosX;
+		public readonly Fixed64 OpponentPosZ;
+
+		public PlayerInput(
+			Fixed64 moveX, Fixed64 moveZ,
+			bool runHeld,
+			bool attackJustPressed,
+			bool blockParryHeld, bool blockParryJustPressed,
+			bool dodgeJustPressed, bool jumpJustPressed,
+			AttackTier modifierTier,
+			bool isGrounded,
+			Fixed64 ownPosX, Fixed64 ownPosZ,
+			Fixed64 opponentPosX, Fixed64 opponentPosZ)
+		{
+			MoveX = moveX;
+			MoveZ = moveZ;
+			RunHeld = runHeld;
+			AttackJustPressed = attackJustPressed;
+			BlockParryHeld = blockParryHeld;
+			BlockParryJustPressed = blockParryJustPressed;
+			DodgeJustPressed = dodgeJustPressed;
+			JumpJustPressed = jumpJustPressed;
+			ModifierTier = modifierTier;
+			IsGrounded = isGrounded;
+			OwnPosX = ownPosX;
+			OwnPosZ = ownPosZ;
+			OpponentPosX = opponentPosX;
+			OpponentPosZ = opponentPosZ;
+		}
+
+		public bool HasMovement => MoveX != Fixed64.Zero || MoveZ != Fixed64.Zero;
 	}
-
-	// PlayerInput is a C# record (immutable value type).
-	// Created fresh each physics frame by the Bridge Layer.
-	public record PlayerInput(
-		Fixed64 MoveX,          // Left stick horizontal, -1 to 1
-		Fixed64 MoveZ,          // Left stick vertical, -1 to 1
-		bool RunHeld,           // R2/RT held
-		bool AttackPressed,     // R1/RB pressed this frame
-		bool BlockParryPressed, // L1/LB pressed or held this frame
-		bool BlockParryJustPressed, // L1/LB pressed this frame only (not held)
-		bool DodgePressed,      // L2/LT pressed this frame
-		bool JumpPressed,       // A/Cross pressed this frame
-		AttackTier ModifierTier // Which modifier was held when attack pressed
-	);
-
-	public enum ArchetypeType { Longsword, Greatsword }
 }
 
