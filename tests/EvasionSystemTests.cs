@@ -45,7 +45,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(DodgeInput());
-			TickN(sim, 3 + 12 + 3); // 18 total
+			TickN(sim, 3 + 12 + 3 + 1); // 19 ticks: 3 startup + 12 active + 3 recovery + 1 exit
 			AssertThat(sim.DebugStateName).IsEqual("Idle");
 		}
 
@@ -106,7 +106,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Economy.SpendMomentum((Fixed64)4.0); // fatigue
 			sim.Tick(DodgeInput());
 			// Fatigued: 3+4=7 startup, 12-4=8 active, 3 recovery
-			AssertThat(sim.DebugStateName).IsEqual("Dodge Startup [6f]"); // 7-1=6
+			AssertThat(sim.DebugStateName).IsEqual("Dodge Startup [7f]");
 		}
 
 		[TestCase]
@@ -116,7 +116,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Economy.SpendMomentum((Fixed64)4.0);
 			sim.Tick(DodgeInput());
 			TickN(sim, 7); // 7 startup frames for fatigued
-			AssertThat(sim.DebugStateName).IsEqual("Dodge Active [7f]"); // 8-1=7
+			AssertThat(sim.DebugStateName).IsEqual("Dodge Active [8f]");
 		}
 
 		[TestCase]
@@ -155,7 +155,9 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(JumpInput());
-			TickN(sim, 3 + 22); // 3 startup + 22 active
+			TickN(sim, 3); // startup done
+			var airborne = AirborneInput();
+			for (int i = 0; i < 22; i++) sim.Tick(airborne); // active done
 			AssertThat(sim.DebugStateName).Contains("Jump Recovery");
 		}
 
@@ -218,7 +220,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Economy.SpendMomentum((Fixed64)4.0); // fatigue
 			sim.Tick(JumpInput());
 			// Fatigued: 3+4=7 startup, 22-4=18 active, 5 recovery
-			AssertThat(sim.DebugStateName).IsEqual("Jump Startup [6f]"); // 7-1=6
+			AssertThat(sim.DebugStateName).IsEqual("Jump Startup [7f]");
 		}
 
 		[TestCase]
@@ -228,7 +230,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Economy.SpendMomentum((Fixed64)4.0);
 			sim.Tick(JumpInput());
 			TickN(sim, 7); // 7 startup frames for fatigued
-			AssertThat(sim.DebugStateName).IsEqual("Jump Active [17f]"); // 18-1=17
+			AssertThat(sim.DebugStateName).IsEqual("Jump Active [18f]");
 		}
 
 		[TestCase]
@@ -269,6 +271,100 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(AttackInput());
 			sim.Tick(JumpInput());
 			AssertThat(sim.DebugStateName).Contains("Coil");
+		}
+
+		// ── Dodge backward (valid direction) ───────────────────────────
+
+		[TestCase]
+		public void Dodge_Backward_Accepted()
+		{
+			// Moving away from opponent (negative Z when opponent is at +Z)
+			var input = new PlayerInput(
+				moveX: Fixed64.Zero, moveZ: -(Fixed64)1.0,
+				runHeld: false,
+				attackJustPressed: false,
+				blockParryHeld: false, blockParryJustPressed: false,
+				dodgeJustPressed: true, jumpJustPressed: false,
+				modifierTier: AttackTier.Standard,
+				isGrounded: true,
+				ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+				opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+			);
+			var sim = CreateSim();
+			sim.Tick(input);
+			AssertThat(sim.DebugStateName).Contains("Dodge");
+		}
+
+		// ── Total frame counts from spec ───────────────────────────────
+
+		[TestCase]
+		public void Dodge_Total_18_Frames()
+		{
+			// §7.3: 3 startup + 12 active + 3 recovery = 18 total
+			var sim = CreateSim();
+			sim.Tick(DodgeInput()); // enters Dodging
+			// Tick 18 more frames to complete the dodge + 1 to exit
+			TickN(sim, 18 + 1);
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+		}
+
+		[TestCase]
+		public void Jump_Total_30_Frames()
+		{
+			// §7.3: 3 startup + 22 active + 5 recovery = 30 total
+			var sim = CreateSim();
+			sim.Tick(JumpInput());
+			TickN(sim, 30);
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+		}
+
+		// ── Dodge fatigued total still 18 frames ───────────────────────
+
+		[TestCase]
+		public void Dodge_Fatigued_Total_Still_18_Frames()
+		{
+			// §7.3: Fatigued = +4 startup, -4 active: 7+8+3 = 18
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0);
+			sim.Tick(DodgeInput());
+			TickN(sim, 18 + 1);
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+		}
+
+		// ── Jump fatigued total still 30 frames ────────────────────────
+
+		[TestCase]
+		public void Jump_Fatigued_Total_Still_30_Frames()
+		{
+			// §7.3: Fatigued = +4 startup, -4 active: 7+18+5 = 30
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0);
+			sim.Tick(JumpInput());
+			TickN(sim, 30);
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+		}
+
+		// ── Momentum NOT deducted when can't afford evasion ────────────
+
+		[TestCase]
+		public void Dodge_Unaffordable_No_Momentum_Deducted()
+		{
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0); // drain to 0
+			double before = (double)sim.Economy.Momentum;
+			sim.Tick(DodgeInput());
+			// Can't afford → no deduction (already at 0)
+			AssertThat((double)sim.Economy.Momentum).IsEqual(before);
+		}
+
+		[TestCase]
+		public void Jump_Unaffordable_No_Momentum_Deducted()
+		{
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0);
+			double before = (double)sim.Economy.Momentum;
+			sim.Tick(JumpInput());
+			AssertThat((double)sim.Economy.Momentum).IsEqual(before);
 		}
 	}
 }

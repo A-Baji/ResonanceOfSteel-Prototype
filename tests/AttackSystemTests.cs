@@ -61,7 +61,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(AttackInput(AttackTier.Light));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T0 [3f]"); // 4-1=3 remaining
+			AssertThat(sim.DebugStateName).IsEqual("Coil T0 [4f]");
 		}
 
 		[TestCase]
@@ -69,7 +69,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(AttackInput(AttackTier.Standard));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T1 [7f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T1 [8f]");
 		}
 
 		[TestCase]
@@ -77,7 +77,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(AttackInput(AttackTier.Heavy));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T2 [15f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T2 [16f]");
 		}
 
 		[TestCase]
@@ -85,7 +85,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(AttackInput(AttackTier.Super));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T3 [23f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T3 [24f]");
 		}
 
 		// ── Greatsword frame data ──────────────────────────────────────
@@ -95,7 +95,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim(GreatswordData.Instance);
 			sim.Tick(AttackInput(AttackTier.Light));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T0 [7f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T0 [8f]");
 		}
 
 		[TestCase]
@@ -103,7 +103,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim(GreatswordData.Instance);
 			sim.Tick(AttackInput(AttackTier.Standard));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T1 [13f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T1 [14f]");
 		}
 
 		[TestCase]
@@ -111,7 +111,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim(GreatswordData.Instance);
 			sim.Tick(AttackInput(AttackTier.Heavy));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T2 [23f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T2 [24f]");
 		}
 
 		[TestCase]
@@ -119,7 +119,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim(GreatswordData.Instance);
 			sim.Tick(AttackInput(AttackTier.Super));
-			AssertThat(sim.DebugStateName).IsEqual("Coil T3 [35f]");
+			AssertThat(sim.DebugStateName).IsEqual("Coil T3 [36f]");
 		}
 
 		// ── Frame advantage coil reduction ─────────────────────────────
@@ -131,7 +131,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Economy.IncrementFrameAdvantage();
 			sim.Economy.IncrementFrameAdvantage(); // 2 stacks
 			sim.Tick(AttackInput(AttackTier.Standard)); // T1: 8 coil - 2 = 6
-			AssertThat(sim.DebugStateName).IsEqual("Coil T1 [5f]"); // 6-1=5 remaining
+			AssertThat(sim.DebugStateName).IsEqual("Coil T1 [6f]");
 		}
 
 		[TestCase]
@@ -149,10 +149,9 @@ namespace ResonanceOfSteel.Tests
 			var sim = CreateSim();
 			// Add many stacks to exceed coil frames
 			for (int i = 0; i < 20; i++) sim.Economy.IncrementFrameAdvantage();
-			sim.Tick(AttackInput(AttackTier.Light)); // T0 Longsword: 4 coil
-			// Should be Coil with 0 remaining (1 frame minimum, consumed this tick)
-			// Actually, Coil(1) → processed → 1-1=0 → transitions to Swing
-			AssertThat(sim.DebugStateName).Contains("Swing"); // went straight through
+			sim.Tick(AttackInput(AttackTier.Light)); // T0 Longsword: 4 coil, reduced to 1
+			sim.Tick(EmptyInput()); // process the 1-frame coil → transitions to Swing
+			AssertThat(sim.DebugStateName).Contains("Swing");
 		}
 
 		// ── Tier 3 active frame armor ──────────────────────────────────
@@ -353,6 +352,82 @@ namespace ResonanceOfSteel.Tests
 			AdvanceToRecovery(sim, AttackTier.Light);
 			sim.Tick(BlockParryPressInput());
 			AssertThat(sim.DebugStateName).Contains("Recovery");
+		}
+
+		// ── Greatsword full attack cycle ───────────────────────────────
+
+		[TestCase]
+		public void Greatsword_T1_Full_Cycle()
+		{
+			var sim = CreateSim(GreatswordData.Instance);
+			CompleteFullAttack(sim, AttackTier.Standard, GreatswordData.Instance);
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+		}
+
+		[TestCase]
+		public void Greatsword_T3_Armor_Active_During_Swing()
+		{
+			var sim = CreateSim(GreatswordData.Instance);
+			AdvanceToSwing(sim, AttackTier.Super, GreatswordData.Instance);
+			sim.Tick(EmptyInput());
+			AssertThat(sim.ArmorActive).IsTrue();
+		}
+
+		// ── OnHitReceived deathblow gate ────────────────────────────────
+
+		[TestCase]
+		public void Hit_At_Full_Composure_Triggers_Deathblow()
+		{
+			var sim = CreateSim();
+			sim.Economy.ApplyComposureDamage((Fixed64)100.0); // max composure
+			sim.OnHitReceived(Fixed64.One, Fixed64.One,
+				wasBlocked: false, AttackTier.Standard, staggerFrames: 12);
+			AssertThat(sim.IsInDeathblow).IsTrue();
+		}
+
+		[TestCase]
+		public void Hit_At_Zero_Vitality_Triggers_Deathblow()
+		{
+			var sim = CreateSim();
+			sim.Economy.ApplyVitalityDamage((Fixed64)100.0);
+			sim.OnHitReceived(Fixed64.One, Fixed64.One,
+				wasBlocked: false, AttackTier.Standard, staggerFrames: 12);
+			AssertThat(sim.IsInDeathblow).IsTrue();
+		}
+
+		// ── Blocked T2 chip + composure ────────────────────────────────
+
+		[TestCase]
+		public void Blocked_T2_Deals_Chip_And_Composure()
+		{
+			var sim = CreateSim();
+			var move = LongswordData.Instance.GetMoveData(AttackTier.Heavy);
+			double vitBefore = (double)sim.Economy.Vitality;
+			double compBefore = (double)sim.Economy.Composure;
+			sim.OnHitReceived(move.VitalityMultiplier, move.ComposureMultiplier,
+				wasBlocked: true, AttackTier.Heavy, staggerFrames: move.StaggerFrames);
+			double chipDmg = vitBefore - (double)sim.Economy.Vitality;
+			double expectedChip = 0.08 * 1.5 * 0.2; // BaseVit × T2Mult × Chip(0.2)
+			AssertThat(chipDmg).IsEqualApprox(expectedChip, 0.001);
+			AssertThat((double)sim.Economy.Composure).IsGreater(compBefore);
+		}
+
+		// ── Attacker gains momentum on hit ─────────────────────────────
+
+		[TestCase]
+		public void Attacker_OnHitLanded_Event_Is_HitLand()
+		{
+			var sim = CreateSim();
+			sim.OnHitLanded(Fixed64.One, Fixed64.One, wasBlocked: false);
+			AssertThat(sim.LastEvent).IsEqual(CombatEvent.HitLand);
+		}
+
+		[TestCase]
+		public void Attacker_OnHitLanded_Blocked_Event_Is_HitBlocked()
+		{
+			var sim = CreateSim();
+			sim.OnHitLanded(Fixed64.One, Fixed64.One, wasBlocked: true);
+			AssertThat(sim.LastEvent).IsEqual(CombatEvent.HitBlocked);
 		}
 	}
 }

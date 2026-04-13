@@ -350,5 +350,135 @@ namespace ResonanceOfSteel.Tests
 				AssertThat(gs.StaggerFrames).IsGreater(ls.StaggerFrames);
 			}
 		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  ECONOMY CONSTANTS defaults match CLAUDE.md §15
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Defaults_MomentumMax_8()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat((double)c.MomentumMax).IsEqual(8.0);
+		}
+
+		[TestCase]
+		public void Defaults_PerfectParryCost_0_5()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat((double)c.PerfectParryCost).IsEqualApprox(0.5, 0.001);
+		}
+
+		[TestCase]
+		public void Defaults_DodgeCost_1_5()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat((double)c.DodgeCost).IsEqualApprox(1.5, 0.001);
+		}
+
+		[TestCase]
+		public void Defaults_JumpCost_1_0()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat((double)c.JumpCost).IsEqual(1.0);
+		}
+
+		[TestCase]
+		public void Defaults_ShatterCost_3_0()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat((double)c.ShatterCost).IsEqualApprox(3.0, 0.001);
+		}
+
+		[TestCase]
+		public void Defaults_ParryWindowFrames_6()
+		{
+			AssertThat(EconomyConstants.Defaults.ParryWindowFrames).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Defaults_InputBufferTTL_6()
+		{
+			AssertThat(EconomyConstants.Defaults.InputBufferTTL).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Defaults_DodgePhases_3_12_3()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat(c.DodgeStartupFrames).IsEqual(3);
+			AssertThat(c.DodgeActiveFrames).IsEqual(12);
+			AssertThat(c.DodgeRecoveryFrames).IsEqual(3);
+		}
+
+		[TestCase]
+		public void Defaults_JumpPhases_3_22_5()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat(c.JumpStartupFrames).IsEqual(3);
+			AssertThat(c.JumpActiveFrames).IsEqual(22);
+			AssertThat(c.JumpRecoveryFrames).IsEqual(5);
+		}
+
+		[TestCase]
+		public void Defaults_EvasionFatiguePenalty_4()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat(c.EvasionFatigueStartupPenalty).IsEqual(4);
+			AssertThat(c.EvasionFatigueActiveReduction).IsEqual(4);
+		}
+
+		[TestCase]
+		public void Defaults_ClashRecoveryFrames_8()
+		{
+			AssertThat(EconomyConstants.Defaults.ClashRecoveryFrames).IsEqual(8);
+		}
+
+		[TestCase]
+		public void Defaults_ShatterWhiffPenaltyFrames_20()
+		{
+			AssertThat(EconomyConstants.Defaults.ShatterWhiffPenaltyFrames).IsEqual(20);
+		}
+
+		[TestCase]
+		public void Defaults_StackDecay_180_60()
+		{
+			var c = EconomyConstants.Defaults;
+			AssertThat(c.StackDecayDelayFrames).IsEqual(180);
+			AssertThat(c.StackDecayIntervalFrames).IsEqual(60);
+		}
+
+		[TestCase]
+		public void Defaults_ChipDamageMultiplier_0_2()
+		{
+			AssertThat((double)EconomyConstants.Defaults.ChipDamageMultiplier).IsEqualApprox(0.2, 0.001);
+		}
+
+		[TestCase]
+		public void Defaults_ArmorTradeLethality_1_5()
+		{
+			AssertThat((double)EconomyConstants.Defaults.ArmorTradeLethality).IsEqualApprox(1.5, 0.001);
+		}
+
+		// ── T0 has zero knockback for both archetypes ──────────────────
+
+		[TestCase]
+		public void T0_Zero_Knockback_Both_Archetypes()
+		{
+			AssertThat(LongswordData.Instance.GetMoveData(AttackTier.Light).KnockbackDistance).IsEqual(0);
+			AssertThat(GreatswordData.Instance.GetMoveData(AttackTier.Light).KnockbackDistance).IsEqual(0);
+		}
+
+		// ── Knockback increases with tier ──────────────────────────────
+
+		[TestCase]
+		public void Knockback_Increases_With_Tier()
+		{
+			var ls = LongswordData.Instance;
+			AssertThat(ls.GetMoveData(AttackTier.Standard).KnockbackDistance)
+				.IsLess(ls.GetMoveData(AttackTier.Heavy).KnockbackDistance);
+			AssertThat(ls.GetMoveData(AttackTier.Heavy).KnockbackDistance)
+				.IsLess(ls.GetMoveData(AttackTier.Super).KnockbackDistance);
+		}
 	}
 }

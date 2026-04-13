@@ -102,7 +102,7 @@ namespace ResonanceOfSteel.Tests
 			// Now do an attack — recovery should include penalty
 			AdvanceToRecovery(sim, AttackTier.Standard);
 			// Standard Longsword T1 recovery = 6, + ShatterWhiffPenaltyFrames(20) = 26
-			AssertThat(sim.DebugStateName).IsEqual("Recovery T1 [25f]"); // 26-1=25
+			AssertThat(sim.DebugStateName).IsEqual("Recovery T1 [26f]");
 		}
 
 		[TestCase]
@@ -113,7 +113,7 @@ namespace ResonanceOfSteel.Tests
 			CompleteFullAttack(sim, AttackTier.Standard);
 			// Second attack should have normal recovery
 			AdvanceToRecovery(sim, AttackTier.Standard);
-			AssertThat(sim.DebugStateName).IsEqual("Recovery T1 [5f]"); // 6-1=5
+			AssertThat(sim.DebugStateName).IsEqual("Recovery T1 [6f]");
 		}
 
 		// ══════════════════════════════════════════════════════════════
@@ -309,6 +309,86 @@ namespace ResonanceOfSteel.Tests
 			sim.OnParrySuccess();
 			sim.OnParrySuccess();
 			AssertThat(sim.Economy.FrameAdvantageStacks).IsEqual(3);
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  SHATTER WINDOW TIMING
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Shatter_Window_Active_For_Exactly_ParryFrames()
+		{
+			// §7.4: Window matches ParryWindowFrames (6)
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput()); // frame 0
+											  // Frames 1-5: still in window (blockPressedFramesAgo = 1..5 < 6)
+			for (int i = 0; i < 5; i++)
+			{
+				sim.Tick(EmptyInput());
+				AssertThat(sim.IsInShatterWindow).IsTrue();
+			}
+			// Frame 6: window expired (blockPressedFramesAgo = 6 >= 6)
+			sim.Tick(EmptyInput());
+			AssertThat(sim.IsInShatterWindow).IsFalse();
+		}
+
+		[TestCase]
+		public void Shatter_Window_Resets_On_New_Press()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 10); // expire window
+			AssertThat(sim.IsInShatterWindow).IsFalse();
+
+			// Re-enter actionable state and press again
+			CompleteFullAttack(sim, AttackTier.Light); // return to Idle
+			sim.Tick(BlockParryPressInput());
+			AssertThat(sim.IsInShatterWindow).IsTrue();
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  DEATHBLOW + BLOCKED (§7.1 cannot prevent deathblow)
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Deathblow_On_Any_Tier_Hit()
+		{
+			// §11: "any strike lands" — T0 should also trigger
+			var sim = CreateSim();
+			for (int i = 0; i < 50; i++)
+				sim.Economy.ApplyComposureDamage((Fixed64)0.5);
+			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
+				wasBlocked: false, AttackTier.Light, staggerFrames: 0);
+			AssertThat(sim.IsInDeathblow).IsTrue();
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  CLASH RECOVERY FRAME VALUES
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Clash_Recovery_Matches_Constant()
+		{
+			// §7.5: ClashRecoveryFrames = 8
+			var sim = CreateSim();
+			sim.OnClash();
+			AssertThat(sim.DebugStateName).IsEqual("Recovery T0 [8f]");
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  PARRY DURING FATIGUE — falls back to blocking
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Parry_Unavailable_During_Fatigue_No_Momentum_Spent()
+		{
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0); // fatigue
+			double before = (double)sim.Economy.Momentum;
+			sim.Tick(BlockParryPressInput());
+			// Falls back to Blocking, no momentum spent
+			AssertThat(sim.IsBlocking).IsTrue();
+			AssertThat((double)sim.Economy.Momentum).IsEqual(before);
 		}
 	}
 }

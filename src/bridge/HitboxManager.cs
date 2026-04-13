@@ -92,110 +92,115 @@ namespace ResonanceOfSteel.Bridge
 			var tier = OwnerBridge.GetCurrentTier();
 			var move = ArchetypeData.GetMoveData(tier);
 
-			// ── Clash detection ──────────────────────────────────────────
-			// Guard: if either player already recorded a clash this frame
-			// (set by the other HitboxManager), skip to avoid double-processing.
-			if (OwnerBridge.IsClashedThisFrame() || OpponentBridge.IsClashedThisFrame())
-				return;
+			// Build snapshots of both players' combat-relevant state.
+			var attackerSnap = new CombatSnapshot(
+				isBlocking: OwnerBridge.IsBlocking(),
+				isParrying: OwnerBridge.IsParrying(),
+				isInDeathblow: OwnerBridge.IsInDeathblow(),
+				isArmorActive: OwnerBridge.IsArmorActive(),
+				isHitboxActive: OwnerBridge.IsHitboxActive(),
+				isInShatterWindow: OwnerBridge.IsInShatterWindow(),
+				clashedThisFrame: OwnerBridge.IsClashedThisFrame(),
+				currentTier: tier);
 
-			bool opponentSwinging = OpponentBridge.IsHitboxActive();
-			AttackTier opponentTier = OpponentBridge.GetCurrentTier();
-			if (opponentSwinging && opponentTier == tier)
+			var defenderSnap = new CombatSnapshot(
+				isBlocking: OpponentBridge.IsBlocking(),
+				isParrying: OpponentBridge.IsParrying(),
+				isInDeathblow: OpponentBridge.IsInDeathblow(),
+				isArmorActive: OpponentBridge.IsArmorActive(),
+				isHitboxActive: OpponentBridge.IsHitboxActive(),
+				isInShatterWindow: OpponentBridge.IsInShatterWindow(),
+				clashedThisFrame: OpponentBridge.IsClashedThisFrame(),
+				currentTier: OpponentBridge.GetCurrentTier());
+
+			// Check shatter affordability without side effects.
+			// TryInitiateShatter() deducts momentum, so we only call it
+			// during ApplyCombatResult when the outcome requires it.
+			bool canAffordShatter = attackerSnap.IsInShatterWindow
+				&& OwnerBridge.CanAffordShatter();
+
+			var result = CombatResolver.Resolve(attackerSnap, defenderSnap, move,
+				OwnerBridge.GetArmorTradeLethality(), canAffordShatter);
+
+			// Apply result to both simulations + bridge effects.
+			ApplyCombatResult(result, move);
+		}
+
+		private void ApplyCombatResult(CombatResult result, MoveData move)
+		{
+			switch (result.Outcome)
 			{
-				OwnerBridge.NotifyClash();
-				OpponentBridge.NotifyClash();
+				case HitOutcome.Clash:
+					OwnerBridge.NotifyClash();
+					OpponentBridge.NotifyClash();
+					if (move.KnockbackDistance > 0)
+					{
+						var clashDir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
+						clashDir.Y = 0;
+						OwnerBridge.ApplyKnockback(-clashDir, move.KnockbackDistance);
+						OpponentBridge.ApplyKnockback(clashDir, move.KnockbackDistance);
+					}
+					break;
 
-				// Clash knockback — both players pushed apart based on clashing move tier.
-				if (move.KnockbackDistance > 0)
-				{
-					var clashDir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
-					clashDir.Y = 0;
-					OwnerBridge.ApplyKnockback(-clashDir, move.KnockbackDistance);
-					OpponentBridge.ApplyKnockback(clashDir, move.KnockbackDistance);
-				}
-				return;
-			}
+				case HitOutcome.ArmorTrade:
+					OpponentBridge.ReceiveHit(result.VitalityMultiplier, result.ComposureMultiplier,
+						blocked: false, result.AttackerTier, staggerFrames: 0);
+					OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
+						move.ComposureMultiplier, blocked: false);
+					break;
 
-			// ── Semantic state queries (no string comparison) ────────────
-			bool isBlocked = OpponentBridge.IsBlocking() || OpponentBridge.IsParrying();
-			bool isParried = OpponentBridge.IsParrying();
-			bool isInDeathblow = OpponentBridge.IsInDeathblow();
-			bool attackerInShatterWindow = OwnerBridge.IsInShatterWindow();
-
-			// ── Armor trade: defender in Tier 3 Swing with active armor ──
-			if (OpponentBridge.IsArmorActive())
-			{
-				var armorVMult = move.VitalityMultiplier * OwnerBridge.GetArmorTradeLethality();
-				OpponentBridge.ReceiveHit(armorVMult, move.ComposureMultiplier,
-					blocked: false, tier, staggerFrames: 0);
-				OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
-					move.ComposureMultiplier, blocked: false);
-				return;
-			}
-
-			// ── Parry / Shatter resolution ───────────────────────────────
-			if (isParried)
-			{
-				// Shatter: attacker must be in shatter window AND afford the cost.
-				// TryInitiateShatter pays the 3.0 Momentum cost on success.
-				bool isShatter = attackerInShatterWindow && OwnerBridge.TryInitiateShatter();
-				if (isShatter)
-				{
-					// Shatter breaks the parry — full damage applies.
-					OpponentBridge.ReceiveHit(move.VitalityMultiplier,
-						move.ComposureMultiplier, blocked: false, tier, move.StaggerFrames);
+				case HitOutcome.ShatterLanded:
+					OwnerBridge.TryInitiateShatter(); // Pay 3.0 Momentum cost
+					OpponentBridge.ReceiveHit(result.VitalityMultiplier,
+						result.ComposureMultiplier, blocked: false,
+						result.AttackerTier, result.StaggerFrames);
 					OwnerBridge.NotifyShatterLanded();
-				}
-				else
-				{
+					break;
+
+				case HitOutcome.ParrySuccess:
 					OpponentBridge.NotifyParrySuccess();
-				}
-				return;
-			}
+					break;
 
-			// ── Shatter whiff (attacker in shatter window but defender is NOT parrying) ─
-			// The swing visually connects but deals no damage — the Shatter commitment
-			// nullifies the hit. Attacker pays 3.0 Momentum AND suffers extra recovery.
-			// No momentum reward, no damage to defender.
-			if (attackerInShatterWindow && OwnerBridge.TryInitiateShatter())
-			{
-				OwnerBridge.NotifyShatterWhiff();
-				return;
-			}
+				case HitOutcome.ShatterWhiff:
+					OwnerBridge.TryInitiateShatter(); // Pay 3.0 Momentum cost
+					OwnerBridge.NotifyShatterWhiff();
+					break;
 
-			// ── Deathblow execution ──────────────────────────────────────
-			// Shatter whiff takes priority: once in deathblow the round is already
-			// decided, so any strike (including a whiffed Shatter) initiates the
-			// execution animation. Shatter whiff is checked above.
-			if (isInDeathblow)
-			{
-				OpponentBridge.ReceiveHit(move.VitalityMultiplier,
-					move.ComposureMultiplier, blocked: false, tier, move.StaggerFrames);
-				OwnerBridge.NotifyDeathblowTriggered();
-				return;
-			}
+				case HitOutcome.Deathblow:
+					OpponentBridge.ReceiveHit(result.VitalityMultiplier,
+						result.ComposureMultiplier, blocked: false,
+						result.AttackerTier, result.StaggerFrames);
+					OwnerBridge.NotifyDeathblowTriggered();
+					break;
 
-			// ── Standard hit / block ─────────────────────────────────────
-			OpponentBridge.ReceiveHit(move.VitalityMultiplier,
-				move.ComposureMultiplier, isBlocked, tier, move.StaggerFrames);
-			OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
-				move.ComposureMultiplier, isBlocked);
+				case HitOutcome.Blocked:
+					OpponentBridge.ReceiveHit(result.VitalityMultiplier,
+						result.ComposureMultiplier, blocked: true,
+						result.AttackerTier, result.StaggerFrames);
+					OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
+						move.ComposureMultiplier, blocked: true);
+					if (move.KnockbackDistance > 0 && result.AttackerTier != AttackTier.Light)
+					{
+						var dir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
+						dir.Y = 0;
+						OpponentBridge.ApplyKnockback(dir, move.KnockbackDistance);
+					}
+					break;
 
-			// ── Knockback on block (T1+ only) ────────────────────────────
-			if (move.KnockbackDistance > 0)
-			{
-				var dir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
-				dir.Y = 0;
-				if (isBlocked && tier != AttackTier.Light)
-				{
-					OpponentBridge.ApplyKnockback(dir, move.KnockbackDistance);
-				}
-				else if (!isBlocked)
-				{
-					// Stagger knockback: 20% of block knockback (StaggerKnockbackMultiplier).
-					OpponentBridge.ApplyKnockback(dir,
-						move.KnockbackDistance * OwnerBridge.StaggerKnockbackMultiplier);
-				}
+				case HitOutcome.Hit:
+					OpponentBridge.ReceiveHit(result.VitalityMultiplier,
+						result.ComposureMultiplier, blocked: false,
+						result.AttackerTier, result.StaggerFrames);
+					OwnerBridge.NotifyHitLanded(move.VitalityMultiplier,
+						move.ComposureMultiplier, blocked: false);
+					if (move.KnockbackDistance > 0)
+					{
+						var dir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
+						dir.Y = 0;
+						OpponentBridge.ApplyKnockback(dir,
+							move.KnockbackDistance * OwnerBridge.StaggerKnockbackMultiplier);
+					}
+					break;
 			}
 		}
 	}

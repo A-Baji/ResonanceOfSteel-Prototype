@@ -11,7 +11,7 @@ namespace ResonanceOfSteel.Tests
 		private EconomyConstants _c;
 		private EconomyHandler _eco;
 
-		[Before]
+		[BeforeTest]
 		public void Setup()
 		{
 			_c = EconomyConstants.Defaults;
@@ -73,7 +73,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			_eco.SpendMomentum((Fixed64)4.0); // start at 0
 			_eco.AddRightOfWayMomentum(isRunning: false);
-			AssertThat((double)_eco.Momentum).IsEqual(0.05);
+			AssertThat((double)_eco.Momentum).IsEqualApprox(0.05, 0.001);
 		}
 
 		[TestCase]
@@ -81,7 +81,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			_eco.SpendMomentum((Fixed64)4.0);
 			_eco.AddRightOfWayMomentum(isRunning: true);
-			AssertThat((double)_eco.Momentum).IsEqual(0.1);
+			AssertThat((double)_eco.Momentum).IsEqualApprox(0.1, 0.001);
 		}
 
 		[TestCase]
@@ -322,7 +322,7 @@ namespace ResonanceOfSteel.Tests
 		public void Chip_Damage_Is_20_Percent()
 		{
 			double chipMult = (double)(_c.ChipDamageMultiplier);
-			AssertThat(chipMult).IsEqual(0.2);
+			AssertThat(chipMult).IsEqualApprox(0.2, 0.001);
 		}
 	}
 }

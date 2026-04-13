@@ -40,7 +40,8 @@ The codebase enforces a strict three-layer architecture. Dependencies flow inwar
 │   PlayerSimulation.cs, EconomyHandler.cs,   │
 │   PlayerStates.cs, InputBuffer.cs,          │
 │   PlayerInput.cs, CombatEvent.cs,           │
-│   EconomyConstants.cs, Archetype Data       │
+│   CombatResolver.cs, EconomyConstants.cs,   │
+│   Archetype Data                            │
 │   NO Godot imports. Fixed64 math only.      │
 │   Deterministic. Serializable.              │
 └─────────────────────────────────────────────┘
@@ -79,7 +80,7 @@ The Simulation-Observer split is a **hard requirement** for Phase 2 rollback net
 | Hitbox Detection | `PhysicsDirectSpaceState3D.IntersectShape()` | ✅ Active | Manual queries per physics tick. Bypasses 1-frame Area3D signal delay. |
 | Input Buffer | Hand-rolled TTL Queue | ✅ Active | 6-frame TTL at 60fps. Priority: block > attack > dodge > jump > run. |
 | Camera | Custom `CameraController.cs` | ✅ Active | Split-screen with opponent auto-focus. |
-| Testing | [GdUnit4](https://github.com/MikeSchulze/gdUnit4Net) v4.4.1 | ✅ Active | C# test framework via NuGet `gdUnit4.api`. 194 tests across 7 test suites covering simulation layer. |
+| Testing | [GdUnit4](https://github.com/MikeSchulze/gdUnit4Net) v5.0.0 | ✅ Active | C# test framework via NuGet `gdUnit4.api`. 250+ tests across 8 test suites covering simulation layer + combat resolution. |
 
 ### 3.1 Rollback Netcode Strategy (Phase 2)
 
@@ -630,6 +631,7 @@ src/
 │   ├── ArchetypeType.cs           # Enum: Longsword/Greatsword
 │   ├── MoveData.cs                # Readonly struct: complete per-move frame/damage data
 │   ├── CombatEvent.cs             # Event enum for hit/parry/shatter/etc
+│   ├── CombatResolver.cs         # Pure C# combat resolution (HitOutcome, CombatResult, CombatSnapshot)
 │   └── archetypes/
 │       ├── IArchetypeData.cs      # Interface: single GetMoveData(tier) → MoveData
 │       ├── LongswordData.cs       # Longsword singleton (sealed)
@@ -650,15 +652,17 @@ src/
     ├── GameCoordinator.cs         # Wires P1↔P2, two-pass tick/resolve, registers P2 inputs
     ├── MainCoordinator.cs         # Entry point
     └── CameraController.cs        # Split-screen camera with opponent focus
-tests/                             # GdUnit4 test suite (simulation layer coverage)
+tests/                             # GdUnit4 test suite (simulation layer + combat resolution)
 ├── TestHelpers.cs                 # Shared factory methods for PlayerInput + sim helpers
 ├── InputBufferTests.cs            # TTL queue, priority, expiry (12 tests)
 ├── EconomyHandlerTests.cs         # Momentum/Composure/Vitality/stacks (27 tests)
-├── PlayerSimulationStateTests.cs  # State machine transitions, action lock (24 tests)
-├── AttackSystemTests.cs           # Coil→Swing→Recovery, armor, chip damage (33 tests)
-├── EvasionSystemTests.cs          # Dodge/Jump 3-phase, fatigue, direction (28 tests)
-├── ShatterClashDeathblowTests.cs  # Shatter/Clash/Deathblow/Parry events (31 tests)
-└── ArchetypeDataTests.cs          # Frame data, multipliers, cross-archetype (39 tests)
+├── PlayerSimulationStateTests.cs  # State machine transitions, action lock, block-walk (33 tests)
+├── AttackSystemTests.cs           # Coil→Swing→Recovery, armor, chip damage, deathblow gate (41 tests)
+├── EvasionSystemTests.cs          # Dodge/Jump 3-phase, fatigue, direction, total frames (36 tests)
+├── ShatterClashDeathblowTests.cs  # Shatter/Clash/Deathblow/Parry events + timing (37 tests)
+├── ArchetypeDataTests.cs          # Frame data, multipliers, cross-archetype, constants (56 tests)
+├── CombatResolverTests.cs         # Resolution order, priority, all HitOutcome paths (30 tests)
+└── BridgeIntegrationTests.cs      # [RequireGodotRuntime] scene runner: block-walk, wiring, signals (13 tests)
 ```
 
 ---

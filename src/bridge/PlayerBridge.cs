@@ -52,6 +52,7 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public HitboxManager ActiveHitboxManager;
 		[Export] public float WalkSpeed = 4.0f;
 		[Export] public float RunSpeed = 7.0f;
+		[Export] public float BlockWalkSpeed = 2.0f;
 		[Export] public Node3D CameraPivot;
 		[Export] public int PlayerIndex = 0;
 		[Export] public float BoundaryPushbackStrength = 5.0f;
@@ -237,7 +238,7 @@ namespace ResonanceOfSteel.Bridge
 
 		// ── Movement application ────────────────────────────────────────
 		// Friction factor for slide-to-stop during committed actions.
-		private const float ActionLockFriction = 0.85f;
+		private const float ActionLockFriction = 0.95f;
 
 		private void ApplyMovement(PlayerInput input, double delta)
 		{
@@ -261,7 +262,10 @@ namespace ResonanceOfSteel.Bridge
 			}
 			else if (input.HasMovement)
 			{
-				float speed = input.RunHeld ? RunSpeed : WalkSpeed;
+				// Blocking suppresses running and limits speed to BlockWalkSpeed.
+				float speed = _sim.IsBlocking
+					? BlockWalkSpeed
+					: (input.RunHeld ? RunSpeed : WalkSpeed);
 				var moveDir = new Vector3((float)input.MoveX, 0, (float)input.MoveZ);
 				Velocity = moveDir * speed;
 			}
@@ -361,6 +365,7 @@ namespace ResonanceOfSteel.Bridge
 
 		// ── Shatter / Clash API ─────────────────────────────────────────
 		public bool IsInShatterWindow() => _sim.IsInShatterWindow;
+		public bool CanAffordShatter() => _sim.Economy.CanAfford((Fixed64)(double)ShatterCost);
 		public bool TryInitiateShatter() => _sim.TryInitiateShatter();
 		public bool IsClashedThisFrame() => _sim.ClashedThisFrame;
 

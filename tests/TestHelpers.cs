@@ -147,6 +147,35 @@ namespace ResonanceOfSteel.Tests
 			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
 		);
 
+		/// <summary>Block held + forward movement (block-walk scenario).</summary>
+		public static PlayerInput BlockWalkForwardInput(bool running = false) => new(
+			moveX: Fixed64.Zero, moveZ: Fixed64.One,
+			runHeld: running,
+			attackJustPressed: false,
+			blockParryHeld: true, blockParryJustPressed: false,
+			dodgeJustPressed: false, jumpJustPressed: false,
+			modifierTier: AttackTier.Standard,
+			isGrounded: true,
+			ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+		);
+
+		/// <summary>Block held + lateral movement.</summary>
+		public static PlayerInput BlockWalkSidewaysInput() => new(
+			moveX: Fixed64.One, moveZ: Fixed64.Zero,
+			runHeld: false,
+			attackJustPressed: false,
+			blockParryHeld: true, blockParryJustPressed: false,
+			dodgeJustPressed: false, jumpJustPressed: false,
+			modifierTier: AttackTier.Standard,
+			isGrounded: true,
+			ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+		);
+
+		/// <summary>Run held + forward movement (standard run).</summary>
+		public static PlayerInput RunForwardInput() => MoveForwardInput(running: true);
+
 		/// <summary>Create a simulation with default constants and Longsword archetype.</summary>
 		public static PlayerSimulation CreateSim(IArchetypeData archetype = null)
 		{
@@ -170,7 +199,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(AttackInput(tier));
 			var move = archetype.GetMoveData(tier);
 			var empty = EmptyInput();
-			for (int i = 1; i < move.CoilFrames; i++)
+			for (int i = 0; i < move.CoilFrames; i++)
 				sim.Tick(empty);
 		}
 
@@ -190,9 +219,8 @@ namespace ResonanceOfSteel.Tests
 		{
 			archetype ??= LongswordData.Instance;
 			AdvanceToRecovery(sim, tier, archetype);
-			var move = archetype.GetMoveData(tier);
 			var empty = EmptyInput();
-			for (int i = 0; i < move.RecoveryFrames; i++)
+			while (!(sim.DebugStateName == "Idle"))
 				sim.Tick(empty);
 		}
 	}

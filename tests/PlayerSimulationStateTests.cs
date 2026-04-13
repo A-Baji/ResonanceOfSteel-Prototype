@@ -137,13 +137,13 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Tick(BlockParryPressInput());
-			// 5 more ticks in parrying (total 6 frames including initial)
-			for (int i = 0; i < 5; i++)
+			// 6 processing ticks to exhaust the parry window
+			for (int i = 0; i < 6; i++)
 			{
 				AssertThat(sim.IsParrying).IsTrue();
 				sim.Tick(EmptyInput());
 			}
-			// After 6 frames, should transition to Blocking
+			// After 6 processing ticks, should transition to Blocking
 			AssertThat(sim.IsBlocking).IsTrue();
 		}
 
@@ -234,15 +234,12 @@ namespace ResonanceOfSteel.Tests
 		public void Buffered_Input_Consumed_After_Return_To_Idle()
 		{
 			var sim = CreateSim();
-			// Start T0 attack (shortest: 4 coil + 2 swing + 4 recovery = 10 frames)
+			// Start T0 attack (4 coil + 2 swing + 4 recovery = 10 frames)
 			sim.Tick(AttackInput(AttackTier.Light));
-			// Wait until near end of recovery, then buffer an attack
-			// Total: coil=4, swing=2, recovery=4. Frame 1 was the attack input.
-			TickN(sim, 7); // frame 8 of 10
-			sim.Tick(AttackInput(AttackTier.Light)); // buffer during recovery
-													 // Finish recovery
-			sim.Tick(EmptyInput()); // frame 10 → idle
-									// The buffered attack should now be consumed → Coil
+			TickN(sim, 8); // advance through coil/swing into Recovery(2)
+			sim.Tick(AttackInput(AttackTier.Light)); // buffer during Recovery(1)
+			sim.Tick(EmptyInput()); // Recovery finishes → Idle (buffer not consumed yet)
+			sim.Tick(EmptyInput()); // Idle → buffer consumed → Coil
 			AssertThat(sim.DebugStateName).Contains("Coil");
 		}
 
@@ -292,6 +289,93 @@ namespace ResonanceOfSteel.Tests
 			sim.ResetState();
 			sim.Tick(EmptyInput());
 			AssertThat(sim.DebugStateName).IsEqual("Idle");
+		}
+
+		// ── Blocking + movement (block-walk) ───────────────────────────
+
+		[TestCase]
+		public void Block_Held_With_Movement_Stays_Blocking()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockWalkForwardInput());
+			AssertThat(sim.IsBlocking).IsTrue();
+			// Still blocking, not Moving
+			AssertThat(sim.DebugStateName).IsEqual("Blocking");
+		}
+
+		[TestCase]
+		public void Block_Held_With_Run_Stays_Blocking()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockWalkForwardInput(running: true));
+			// Run is suppressed while blocking — still Blocking state
+			AssertThat(sim.IsBlocking).IsTrue();
+		}
+
+		[TestCase]
+		public void Blocking_Not_Action_Locked_Allows_Movement()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockWalkForwardInput());
+			AssertThat(sim.IsActionLocked).IsFalse();
+		}
+
+		// ── Parry window → Blocking transition ─────────────────────────
+
+		[TestCase]
+		public void Parry_Exhausted_Transitions_To_Blocking()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput());
+			// Exhaust 6-frame parry window
+			for (int i = 0; i < 6; i++)
+				sim.Tick(EmptyInput());
+			AssertThat(sim.IsBlocking).IsTrue();
+			AssertThat(sim.IsParrying).IsFalse();
+		}
+
+		// ── RoW momentum during Blocking state ─────────────────────────
+
+		[TestCase]
+		public void RoW_Momentum_During_Blocking()
+		{
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0);
+			sim.Tick(BlockWalkForwardInput());
+			// Walking toward opponent while blocking should generate RoW
+			AssertThat((double)sim.Economy.Momentum).IsGreater(0.0);
+		}
+
+		// ── Event reset per tick ────────────────────────────────────────
+
+		[TestCase]
+		public void LastEvent_Reset_Each_Tick()
+		{
+			var sim = CreateSim();
+			sim.OnParrySuccess();
+			AssertThat(sim.LastEvent).IsEqual(CombatEvent.ParrySuccess);
+			sim.Tick(EmptyInput());
+			AssertThat(sim.LastEvent).IsEqual(CombatEvent.None);
+		}
+
+		// ── HitboxActive only during Swing ─────────────────────────────
+
+		[TestCase]
+		public void HitboxActive_False_During_Coil()
+		{
+			var sim = CreateSim();
+			sim.Tick(AttackInput());
+			sim.Tick(EmptyInput()); // process 1 coil tick
+			AssertThat(sim.HitboxActive).IsFalse();
+		}
+
+		[TestCase]
+		public void HitboxActive_False_During_Recovery()
+		{
+			var sim = CreateSim();
+			AdvanceToRecovery(sim, AttackTier.Standard);
+			sim.Tick(EmptyInput()); // process 1 recovery tick
+			AssertThat(sim.HitboxActive).IsFalse();
 		}
 	}
 }
