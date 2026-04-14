@@ -276,7 +276,8 @@ Tier 0 damage is **conditional** on block state:
 - Costs 0.5 Momentum segments
 - Grants +1 Frame Advantage Stack
 - **Unavailable during Fatigue**
-- 6-frame parry window
+- 6-frame parry window (base; reduced by Premature Press Penalty — see §7.6)
+- Successful parry resets the Premature Press Penalty counter
 
 ### 7.3 Evasion
 
@@ -308,7 +309,7 @@ A timing-based input modifier applied to any attack tier. High-risk "Parry-Trap.
 | Defender is not blocking | Shatter **whiffs**: 3.0 Momentum cost + extra recovery. **No damage dealt** — the Shatter commitment nullifies the hit. |
 | Shatter on Tier 0 | Permitted but inadvisable — damage insufficient to justify Momentum cost |
 
-**Shatter detection**: A Shatter activates when the attacker inputs `block_parry` within the parry window during their Swing phase at the moment of hitbox contact, AND affords the 3.0 Momentum cost. The cost is paid on activation regardless of outcome. The only **successful** Shatter is when the defender was Perfect Parrying — all other outcomes are whiffs where the Shatter commitment nullifies the hit entirely (no damage, no momentum reward). The only additional punishment for whiffing is the extra recovery frames.
+**Shatter detection**: A Shatter activates when the attacker inputs `block_parry` within the effective parry window (base 6 frames, reduced by Premature Press Penalty — see §7.6) during their Swing phase at the moment of hitbox contact, AND affords the 3.0 Momentum cost. The cost is paid on activation regardless of outcome. The only **successful** Shatter is when the defender was Perfect Parrying — all other outcomes are whiffs where the Shatter commitment nullifies the hit entirely (no damage, no momentum reward). The only additional punishment for whiffing is the extra recovery frames. Shatter whiff also increments the Premature Press Penalty. Successful Shatter resets it.
 
 ### 7.5 The 5-Frame Clash Window
 
@@ -318,6 +319,31 @@ When two attacks of the same tier collide within 5 frames of each other:
 - Cooldown period follows to prevent mash-spam
 - **Initiating any attack resets Frame Advantage Stacks** (per Stack Reset Rules), so a Clash also resets the attacking player's stacks
 - Clash is a **Momentum recovery tool only** — no stack interaction
+
+### 7.6 Premature Press Penalty
+
+Prevents spam-pressing `block_parry` for free parry/shatter attempts. A shared penalty counter tracks "wasted" block presses that failed to connect.
+
+**When penalty increments:**
+- Parry window expires without a successful `OnParrySuccess` call ("whiffed parry")
+- `OnShatterWhiff` is called (shatter-modified hit connected against a non-parrying defender)
+
+**When penalty resets to 0:**
+- `OnParrySuccess` (successful parry)
+- `OnShatterLanded` (shatter broke a parry)
+- `ResetState` (between rounds)
+- Inactivity: 30 frames (`PenaltyInactivityResetFrames`) of no `block_parry` press (Sekiro-style decay)
+
+**Effect:** Each accumulated penalty **halves** the effective parry/shatter window, using integer ceiling division:
+
+| Penalties | Effective Window | Calculation |
+|-----------|-----------------|-------------|
+| 0 | 6 frames | Base `ParryWindowFrames` |
+| 1 | 3 frames | ceil(6 / 2) |
+| 2 | 2 frames | ceil(3 / 2) |
+| 3+ | 1 frame | Clamped minimum |
+
+Both the `Parrying(FramesLeft)` state duration and the `IsInShatterWindow` check use `EffectiveParryWindowFrames` instead of the raw constant.
 
 ---
 

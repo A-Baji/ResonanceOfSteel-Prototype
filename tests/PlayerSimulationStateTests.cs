@@ -377,5 +377,321 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(EmptyInput()); // process 1 recovery tick
 			AssertThat(sim.HitboxActive).IsFalse();
 		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  Moving state: transitions and input handling
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Moving_To_Blocking_On_BlockHeld()
+		{
+			// ProcessMoving → ProcessActionableInput handles BlockParryHeld via default branch
+			var sim = CreateSim();
+			sim.Tick(MoveForwardInput()); // enter Moving
+			AssertThat(sim.DebugStateName).IsEqual("Moving");
+			sim.Tick(BlockWalkForwardInput()); // hold block while moving → Blocking
+			AssertThat(sim.IsBlocking).IsTrue();
+		}
+
+		[TestCase]
+		public void Attack_Buffered_During_Blocking_Fires_After_Release()
+		{
+			// Attack pressed while blocking goes to buffer; consumed when block is released
+			var sim = CreateSim();
+			sim.Tick(BlockHeldInput()); // enter Blocking
+			// Press attack while holding block (attack buffered, block continues)
+			var blockWithAttack = new PlayerInput(
+				moveX: Fixed64.Zero, moveZ: Fixed64.Zero,
+				runHeld: false, attackJustPressed: true,
+				blockParryHeld: true, blockParryJustPressed: false,
+				dodgeJustPressed: false, jumpJustPressed: false,
+				modifierTier: AttackTier.Standard, isGrounded: true,
+				ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+				opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ);
+			sim.Tick(blockWithAttack);
+			AssertThat(sim.IsBlocking).IsTrue();
+			AssertThat(sim.DebugBufferCount).IsEqual(1);
+			sim.Tick(EmptyInput()); // release block → transitions to Idle
+			sim.Tick(EmptyInput()); // Idle: buffer consumed → Coil
+			AssertThat(sim.DebugStateName).Contains("Coil");
+		}
+
+		[TestCase]
+		public void BlockParry_Buffered_During_Recovery_Executes_As_Parry()
+		{
+			// block_parry pressed late in Recovery stays buffered and fires as Parrying
+			// when the sim returns to Idle (within TTL window)
+			var sim = CreateSim();
+			AdvanceToRecovery(sim, AttackTier.Light); // Recovery(4, T0)
+			TickN(sim, 3); // countdown to Recovery(1)
+			sim.Tick(BlockParryPressInput()); // buffered; Recovery(1) → Idle this tick
+			sim.Tick(EmptyInput()); // Idle: buffer consumed → Parrying
+			AssertThat(sim.IsParrying).IsTrue();
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  PREMATURE PRESS PENALTY (§7.6)
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Initial_Penalty_Is_Zero()
+		{
+			var sim = CreateSim();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Parry_Whiff_Increments_Penalty()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput()); // enter Parrying(6)
+			TickN(sim, 6); // exhaust window → Blocking, no OnParrySuccess
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+		}
+
+		[TestCase]
+		public void One_Penalty_Halves_Window_To_3()
+		{
+			var sim = CreateSim();
+			// Whiff once
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(3);
+		}
+
+		[TestCase]
+		public void Two_Penalties_Reduce_Window_To_2()
+		{
+			var sim = CreateSim();
+			// Whiff twice
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput()); // exit blocking
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 3); // effective window is now 3
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(2);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(2);
+		}
+
+		[TestCase]
+		public void Three_Penalties_Reduce_Window_To_1()
+		{
+			var sim = CreateSim();
+			// Whiff three times
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput());
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 3);
+			sim.Tick(EmptyInput());
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 2);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(3);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(1);
+		}
+
+		[TestCase]
+		public void Penalty_Clamped_At_One_Frame_Minimum()
+		{
+			var sim = CreateSim();
+			// Whiff four times
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput());
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 3);
+			sim.Tick(EmptyInput());
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 2);
+			sim.Tick(EmptyInput());
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 1);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(4);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(1);
+		}
+
+		[TestCase]
+		public void Parry_Success_Resets_Penalty()
+		{
+			var sim = CreateSim();
+			// Whiff once
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+			// Successful parry
+			sim.OnParrySuccess();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Parry_Not_Penalized_When_Successful()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput()); // enter Parrying(6)
+			sim.OnParrySuccess(); // successful parry during window
+			TickN(sim, 5); // exhaust remaining window → Blocking
+			// Penalty should NOT have incremented because success flag was set
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+		}
+
+		[TestCase]
+		public void Penalty_Reset_On_ResetState()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6); // whiff
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+			sim.ResetState();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Penalized_Parry_Window_Actually_Shorter()
+		{
+			var sim = CreateSim();
+			// Whiff once → window = 3
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput()); // exit blocking
+			// Enter parry again — should have 3-frame window
+			sim.Tick(BlockParryPressInput());
+			AssertThat(sim.IsParrying).IsTrue();
+			// After 3 ticks, should be in Blocking (not still Parrying)
+			TickN(sim, 3);
+			AssertThat(sim.IsBlocking).IsTrue();
+		}
+
+		[TestCase]
+		public void Penalty_Decays_After_Inactivity()
+		{
+			var sim = CreateSim();
+			// Whiff once → penalty = 1
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+			sim.Tick(EmptyInput()); // exit blocking
+			// Tick 30 empty frames (inactivity threshold)
+			TickN(sim, 30);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Penalty_Not_Decayed_Before_Inactivity_Threshold()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6); // whiff → penalty = 1
+			sim.Tick(EmptyInput()); // exit blocking
+			// Tick only 22 frames — not enough for reset
+			// (6 parry ticks + 1 exit + 22 = 29 frames since press, under threshold)
+			TickN(sim, 22);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+		}
+
+		[TestCase]
+		public void Penalty_Inactivity_Resets_Effective_Window()
+		{
+			var sim = CreateSim();
+			// Whiff twice → penalty = 2, window = 2
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput());
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 3); // effective window = 3, whiff after 3
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(2);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(2);
+			sim.Tick(EmptyInput());
+			// Wait for inactivity reset (30 frames from last press)
+			TickN(sim, 30);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(6);
+		}
+
+		[TestCase]
+		public void Penalty_Inactivity_Timer_Resets_On_New_Press()
+		{
+			var sim = CreateSim();
+			// Whiff once → penalty = 1
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput());
+			// Wait 20 frames (not enough for reset)
+			TickN(sim, 20);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+			// Press block again — resets the inactivity timer
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 3); // whiff (window was 3) → penalty = 2
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(2);
+			sim.Tick(EmptyInput());
+			// Now wait 29 frames — still not enough from the NEW press
+			TickN(sim, 25);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(2);
+		}
+
+		[TestCase]
+		public void RoW_Not_Generated_During_ActionLock()
+		{
+			var sim = CreateSim();
+			double before = (double)sim.Economy.Momentum;
+			sim.Tick(AttackInput()); // enter Coil (action-locked)
+			// Tick with forward movement during action lock
+			sim.Tick(MoveForwardInput());
+			double after = (double)sim.Economy.Momentum;
+			// No RoW momentum should be generated during action lock
+			AssertThat(after).IsEqual(before);
+		}
+
+		[TestCase]
+		public void RoW_Moving_Away_No_Momentum()
+		{
+			var sim = CreateSim();
+			double before = (double)sim.Economy.Momentum;
+			// Move backward (away from opponent at +5Z)
+			var backwardInput = new PlayerInput(
+				moveX: Fixed64.Zero, moveZ: -(Fixed64)1.0,
+				runHeld: false,
+				attackJustPressed: false,
+				blockParryHeld: false, blockParryJustPressed: false,
+				dodgeJustPressed: false, jumpJustPressed: false,
+				modifierTier: AttackTier.Standard,
+				isGrounded: true,
+				ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+				opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+			);
+			sim.Tick(backwardInput);
+			double after = (double)sim.Economy.Momentum;
+			AssertThat(after).IsEqual(before);
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  IsMovingToward edge cases
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void IsMovingToward_Returns_False_When_At_Same_Position()
+		{
+			// §5: distSq == 0 guard — opponent at exact same XZ position.
+			// With distSq == 0 the dot-product check short-circuits to false.
+			var sim = CreateSim();
+			sim.Economy.SpendMomentum((Fixed64)4.0); // start at 0
+			var samePos = new PlayerInput(
+				moveX: Fixed64.Zero, moveZ: Fixed64.One,
+				runHeld: false,
+				attackJustPressed: false,
+				blockParryHeld: false, blockParryJustPressed: false,
+				dodgeJustPressed: false, jumpJustPressed: false,
+				modifierTier: AttackTier.Standard,
+				isGrounded: true,
+				ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+				opponentPosX: DefaultOwnX, opponentPosZ: DefaultOwnZ // same as own
+			);
+			sim.Tick(samePos);
+			// No RoW generated when opponent is at the same position
+			AssertThat((double)sim.Economy.Momentum).IsEqual(0.0);
+		}
 	}
 }

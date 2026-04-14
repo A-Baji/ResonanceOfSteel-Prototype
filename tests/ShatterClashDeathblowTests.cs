@@ -222,6 +222,7 @@ namespace ResonanceOfSteel.Tests
 			var sim = CreateSim();
 			for (int i = 0; i < 50; i++)
 				sim.Economy.ApplyComposureDamage((Fixed64)0.5);
+			sim.Tick(BlockHeldInput()); // enter Blocking state (blocked hit requires blocker in Blocking)
 			sim.OnHitReceived(Fixed64.One, Fixed64.One,
 				wasBlocked: true, AttackTier.Standard, staggerFrames: 12);
 			AssertThat(sim.IsInDeathblow).IsTrue();
@@ -389,6 +390,141 @@ namespace ResonanceOfSteel.Tests
 			// Falls back to Blocking, no momentum spent
 			AssertThat(sim.IsBlocking).IsTrue();
 			AssertThat((double)sim.Economy.Momentum).IsEqual(before);
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  PREMATURE PRESS PENALTY — SHATTER INTERACTIONS (§7.6)
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Shatter_Whiff_Increments_Block_Penalty()
+		{
+			var sim = CreateSim();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			sim.OnShatterWhiff();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+		}
+
+		[TestCase]
+		public void Shatter_Success_Resets_Block_Penalty()
+		{
+			var sim = CreateSim();
+			sim.OnShatterWhiff(); // penalty = 1
+			sim.OnShatterLanded();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+		}
+
+		[TestCase]
+		public void Penalty_Reduces_Shatter_Window()
+		{
+			var sim = CreateSim();
+			sim.OnShatterWhiff(); // penalty = 1 → effective window = 3
+			// Press block, immediate check (frame 0 after press)
+			sim.Tick(BlockParryPressInput());
+			AssertThat(sim.IsInShatterWindow).IsTrue();
+			// Advance 3 frames total past the press (frame 3)
+			TickN(sim, 3);
+			// Effective window = 3, so frame index 3 is OUT of window
+			AssertThat(sim.IsInShatterWindow).IsFalse();
+		}
+
+		[TestCase]
+		public void Penalty_Shared_Between_Parry_Shatter()
+		{
+			var sim = CreateSim();
+			// Whiff parry (penalty = 1)
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput()); // exit blocking
+			// Effective shatter window should also be 3
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(3);
+		}
+
+		[TestCase]
+		public void No_Momentum_Gain_On_Shatter_Whiff()
+		{
+			var sim = CreateSim();
+			double before = (double)sim.Economy.Momentum;
+			sim.OnShatterWhiff();
+			double after = (double)sim.Economy.Momentum;
+			AssertThat(after).IsEqual(before);
+		}
+
+		[TestCase]
+		public void Shatter_Whiff_Accumulates_With_Parry_Whiff()
+		{
+			var sim = CreateSim();
+			// Parry whiff → penalty = 1
+			sim.Tick(BlockParryPressInput());
+			TickN(sim, 6);
+			sim.Tick(EmptyInput());
+			// Shatter whiff → penalty = 2
+			sim.OnShatterWhiff();
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(2);
+			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(2);
+		}
+
+		[TestCase]
+		public void Shatter_Window_Penalized_Exact_Frame_Count()
+		{
+			var sim = CreateSim();
+			sim.OnShatterWhiff(); // penalty = 1 → effective window = 3
+			// New block press
+			sim.Tick(BlockParryPressInput()); // blockPressedFramesAgo = 0
+			// Frames 1-2 should be in window
+			sim.Tick(EmptyInput()); // ago = 1, 1 < 3 = true
+			AssertThat(sim.IsInShatterWindow).IsTrue();
+			sim.Tick(EmptyInput()); // ago = 2, 2 < 3 = true
+			AssertThat(sim.IsInShatterWindow).IsTrue();
+			// Frame 3: expired
+			sim.Tick(EmptyInput()); // ago = 3, 3 < 3 = false
+			AssertThat(sim.IsInShatterWindow).IsFalse();
+		}
+
+		[TestCase]
+		public void Shatter_Penalty_Decays_After_Inactivity()
+		{
+			var sim = CreateSim();
+			sim.OnShatterWhiff(); // penalty = 1
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
+			// No block press for 30 frames → inactivity reset
+			TickN(sim, 30);
+			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
+			AssertThat(sim.IsInShatterWindow).IsFalse();
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  Shatter window initial state + OnClash from any state
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Initial_IsInShatterWindow_False()
+		{
+			// Before any block press, _blockPressedFramesAgo starts at int.MaxValue/2.
+			// IsInShatterWindow is always false before first press.
+			var sim = CreateSim();
+			AssertThat(sim.IsInShatterWindow).IsFalse();
+		}
+
+		[TestCase]
+		public void OnClash_From_Idle_Forces_Recovery()
+		{
+			// OnClash is called by HitboxManager after hit resolution regardless of state.
+			// It must always put the sim into Recovery(ClashRecoveryFrames).
+			var sim = CreateSim();
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+			sim.OnClash();
+			AssertThat(sim.DebugStateName).Contains("Recovery");
+		}
+
+		[TestCase]
+		public void OnClash_From_Blocking_Forces_Recovery()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockHeldInput()); // enter Blocking
+			AssertThat(sim.IsBlocking).IsTrue();
+			sim.OnClash();
+			AssertThat(sim.DebugStateName).Contains("Recovery");
 		}
 	}
 }

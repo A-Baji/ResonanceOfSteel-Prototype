@@ -50,6 +50,8 @@ namespace ResonanceOfSteel.Presentation
 			var composure = player.GetComposure();
 			var momentum = player.GetMomentum();
 			var stacks = player.GetFrameAdvantageStacks();
+			var blockPenalties = player.GetPrematureBlockPenalties();
+			var effectiveWindow = player.GetEffectiveParryWindow();
 			var tier = player.GetCurrentTier();
 			var lastEvent = player.GetLastEventName();
 			var bufferCount = player.GetDebugBufferCount();
@@ -68,6 +70,7 @@ namespace ResonanceOfSteel.Presentation
 				+ $"[b]Composure:[/b] {composure:F3}\n"
 				+ $"[b]Momentum:[/b]  {momentum:F2} / 8.0\n"
 				+ $"[b]Stacks:[/b]    {stacks}\n"
+				+ $"[b]Block Pen:[/b] {blockPenalties} (Window: {effectiveWindow}f)\n"
 				+ $"\n"
 				+ $"[b]Flags:[/b]\n"
 				+ $"  ActionLocked: {BoolTag(actionLocked)}\n"

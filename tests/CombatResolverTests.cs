@@ -358,5 +358,123 @@ namespace ResonanceOfSteel.Tests
 				T1Move, DefaultArmorLethality, attackerCanAffordShatter: true);
 			AssertThat(result.Outcome).IsEqual(HitOutcome.ShatterWhiff);
 		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  ADDITIONAL COVERAGE — Knockback, ArmorTrade, Shatter Edge Cases
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void ArmorTrade_Zero_Knockback()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(AttackTier.Standard),
+				Defender(armorActive: true),
+				T1Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.ArmorTrade);
+			AssertThat(result.KnockbackDistance).IsEqual(0);
+		}
+
+		[TestCase]
+		public void Blocked_Hit_Carries_Knockback()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(AttackTier.Standard),
+				Defender(blocking: true),
+				T1Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Blocked);
+			AssertThat(result.KnockbackDistance).IsEqual(T1Move.KnockbackDistance);
+		}
+
+		[TestCase]
+		public void Unblocked_Hit_Carries_Stagger_And_Knockback()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(AttackTier.Standard),
+				Defender(),
+				T1Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Hit);
+			AssertThat(result.StaggerFrames).IsEqual(T1Move.StaggerFrames);
+			AssertThat(result.KnockbackDistance).IsEqual(T1Move.KnockbackDistance);
+		}
+
+		[TestCase]
+		public void Clash_Carries_Knockback()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(AttackTier.Standard),
+				Defender(hitboxActive: true, tier: AttackTier.Standard),
+				T1Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Clash);
+			AssertThat(result.KnockbackDistance).IsEqual(T1Move.KnockbackDistance);
+		}
+
+		[TestCase]
+		public void Shatter_Unaffordable_Against_NonParrying_Is_Normal_Hit()
+		{
+			// Attacker in shatter window but can't afford — falls to standard Hit
+			var result = CombatResolver.Resolve(
+				Attacker(inShatterWindow: true),
+				Defender(),
+				T1Move, DefaultArmorLethality, attackerCanAffordShatter: false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Hit);
+		}
+
+		[TestCase]
+		public void Shatter_Unaffordable_Against_Block_Is_Normal_Block()
+		{
+			// Attacker in shatter window but can't afford + defender blocking → normal Blocked
+			var result = CombatResolver.Resolve(
+				Attacker(inShatterWindow: true),
+				Defender(blocking: true),
+				T1Move, DefaultArmorLethality, attackerCanAffordShatter: false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Blocked);
+		}
+
+		[TestCase]
+		public void ParrySuccess_Zero_Knockback_And_Stagger()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(),
+				Defender(parrying: true),
+				T1Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.ParrySuccess);
+			AssertThat(result.KnockbackDistance).IsEqual(0);
+			AssertThat(result.StaggerFrames).IsEqual(0);
+		}
+
+		[TestCase]
+		public void ShatterLanded_Carries_Full_Stagger_And_Knockback()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(inShatterWindow: true),
+				Defender(parrying: true),
+				T1Move, DefaultArmorLethality, attackerCanAffordShatter: true);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.ShatterLanded);
+			AssertThat(result.StaggerFrames).IsEqual(T1Move.StaggerFrames);
+			AssertThat(result.KnockbackDistance).IsEqual(T1Move.KnockbackDistance);
+		}
+
+		[TestCase]
+		public void T0_Hit_Zero_Stagger_And_Knockback()
+		{
+			var result = CombatResolver.Resolve(
+				Attacker(AttackTier.Light),
+				Defender(),
+				T0Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Hit);
+			AssertThat(result.StaggerFrames).IsEqual(0);
+			AssertThat(result.KnockbackDistance).IsEqual(0);
+		}
+
+		[TestCase]
+		public void Deathblow_Ignores_Blocking()
+		{
+			// Defender is in deathblow AND blocking → Deathblow still triggers
+			var result = CombatResolver.Resolve(
+				Attacker(),
+				Defender(blocking: true, deathblow: true),
+				T1Move, DefaultArmorLethality, false);
+			AssertThat(result.Outcome).IsEqual(HitOutcome.Deathblow);
+		}
 	}
 }

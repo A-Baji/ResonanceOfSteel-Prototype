@@ -176,6 +176,19 @@ namespace ResonanceOfSteel.Tests
 		/// <summary>Run held + forward movement (standard run).</summary>
 		public static PlayerInput RunForwardInput() => MoveForwardInput(running: true);
 
+		/// <summary>Attack pressed while simultaneously holding forward movement (Moving → Coil path).</summary>
+		public static PlayerInput AttackWhileMovingInput(AttackTier tier = AttackTier.Standard) => new(
+			moveX: Fixed64.Zero, moveZ: Fixed64.One,
+			runHeld: false,
+			attackJustPressed: true,
+			blockParryHeld: false, blockParryJustPressed: false,
+			dodgeJustPressed: false, jumpJustPressed: false,
+			modifierTier: tier,
+			isGrounded: true,
+			ownPosX: DefaultOwnX, ownPosZ: DefaultOwnZ,
+			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+		);
+
 		/// <summary>Create a simulation with default constants and Longsword archetype.</summary>
 		public static PlayerSimulation CreateSim(IArchetypeData archetype = null)
 		{

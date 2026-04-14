@@ -366,5 +366,31 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(JumpInput());
 			AssertThat((double)sim.Economy.Momentum).IsEqual(before);
 		}
+
+		// ── Consecutive evasion after first completes ──────────────────
+
+		[TestCase]
+		public void Consecutive_Dodge_Is_Possible_After_First_Completes()
+		{
+			// §7.3: After 18-frame dodge, player returns to Idle — can immediately dodge again
+			var sim = CreateSim();
+			sim.Tick(DodgeInput()); // first dodge
+			TickN(sim, 19); // complete full cycle (18 + 1 to exit Recovery)
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+			sim.Tick(DodgeInput()); // second dodge
+			AssertThat(sim.DebugStateName).Contains("Dodge");
+		}
+
+		[TestCase]
+		public void Consecutive_Jump_Is_Possible_After_First_Completes()
+		{
+			// After 30-frame jump, player returns to Idle — can immediately jump again
+			var sim = CreateSim();
+			sim.Tick(JumpInput());
+			TickN(sim, 30); // complete full cycle
+			AssertThat(sim.DebugStateName).IsEqual("Idle");
+			sim.Tick(JumpInput()); // second jump
+			AssertThat(sim.DebugStateName).Contains("Jump");
+		}
 	}
 }

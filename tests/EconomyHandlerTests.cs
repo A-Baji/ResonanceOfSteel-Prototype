@@ -324,5 +324,82 @@ namespace ResonanceOfSteel.Tests
 			double chipMult = (double)(_c.ChipDamageMultiplier);
 			AssertThat(chipMult).IsEqualApprox(0.2, 0.001);
 		}
+
+		// ── Composure cooldown reset ────────────────────────────────────
+
+		[TestCase]
+		public void Composure_Cooldown_Resets_On_New_Damage()
+		{
+			// Apply composure damage (starts 90-frame cooldown)
+			_eco.ApplyComposureDamage(Fixed64.One);
+			double afterDamage = (double)_eco.Composure;
+			// Tick 45 frames (half of cooldown)
+			for (int i = 0; i < 45; i++)
+				_eco.TickComposureRecovery();
+			// Apply more composure damage (should RESTART 90-frame cooldown)
+			_eco.ApplyComposureDamage(Fixed64.One);
+			double afterSecondDamage = (double)_eco.Composure;
+			// Tick another 45 frames — should NOT have recovered because cooldown restarted
+			double beforeRecovery = (double)_eco.Composure;
+			for (int i = 0; i < 45; i++)
+				_eco.TickComposureRecovery();
+			double afterPartialCooldown = (double)_eco.Composure;
+			// Composure should be unchanged (still in cooldown)
+			AssertThat(afterPartialCooldown).IsEqual(beforeRecovery);
+		}
+
+		[TestCase]
+		public void Momentum_Starts_At_Half_Max_Not_Exceeding()
+		{
+			// Verify initial momentum is exactly MomentumMax / 2
+			double halfMax = (double)(_c.MomentumMax / (Fixed64)2.0);
+			AssertThat((double)_eco.Momentum).IsEqual(halfMax);
+		}
+
+		[TestCase]
+		public void Stack_Decay_Does_Not_Underflow()
+		{
+			_eco.IncrementFrameAdvantage(); // 1 stack
+			// Advance past decay delay
+			for (int i = 0; i < _c.StackDecayDelayFrames; i++)
+				_eco.TickStackDecay();
+			// Decay one stack
+			for (int i = 0; i < _c.StackDecayIntervalFrames; i++)
+				_eco.TickStackDecay();
+			AssertThat(_eco.FrameAdvantageStacks).IsEqual(0);
+			// Continue ticking — should remain at 0, not go negative
+			for (int i = 0; i < _c.StackDecayIntervalFrames * 3; i++)
+				_eco.TickStackDecay();
+			AssertThat(_eco.FrameAdvantageStacks).IsEqual(0);
+		}
+
+		[TestCase]
+		public void Composure_Damage_Applies_When_Terminal_Vitality()
+		{
+			// Terminal vitality halts composure RECOVERY but damage still applies.
+			_eco.ApplyVitalityDamage((Fixed64)100.0); // drain to 0 (Terminal)
+			AssertThat(_eco.IsTerminal).IsTrue();
+			double compBefore = (double)_eco.Composure;
+			_eco.ApplyComposureDamage(Fixed64.One);
+			AssertThat((double)_eco.Composure).IsGreater(compBefore);
+		}
+
+		[TestCase]
+		public void StackDecay_Timer_Resets_After_ConsumeCoilReduction()
+		{
+			// Stack decay delay (180f) must restart after stacks are consumed,
+			// so a partial countdown does NOT carry into freshly-built stacks.
+			_eco.IncrementFrameAdvantage(); // stack = 1
+			// Advance 170 frames — approaching decay delay (180) but not there yet
+			for (int i = 0; i < 170; i++) _eco.TickStackDecay();
+			AssertThat(_eco.FrameAdvantageStacks).IsEqual(1);
+			// Consuming resets _framesSinceLastParry and _decayAccumulator
+			_eco.ConsumeFrameAdvantageCoilReduction();
+			// Build a new stack (IncrementFrameAdvantage also resets decay timer)
+			_eco.IncrementFrameAdvantage();
+			// Advance another 170 frames — should NOT decay (timer restarted from 0)
+			for (int i = 0; i < 170; i++) _eco.TickStackDecay();
+			AssertThat(_eco.FrameAdvantageStacks).IsEqual(1);
+		}
 	}
 }

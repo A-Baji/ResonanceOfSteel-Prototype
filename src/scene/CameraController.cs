@@ -14,9 +14,9 @@ namespace ResonanceOfSteel.Scene
 		// Camera adjustment parameters.
 		[Export] public float HeightScale = 5.0f; // How much the camera height changes based on distance.
 		[Export] public float MinHeight = 0.5f; // Minimum height.
-		[Export] public float MaxHeight = 2.0f; // Maximum height.
+		[Export] public float MaxHeight = 1.5f; // Maximum height.
 		[Export] public float HeightSpeed = 5.0f; // How quickly the camera height adjusts.
-		[Export] public float MinPitch = -0.25f; // Minimum pitch angle in radians (looking down).
+		[Export] public float MinPitch = -0.5f; // Minimum pitch angle in radians (looking down).
 		[Export] public float MaxPitch = 0.5f; // Maximum pitch angle in radians (looking up).
 
 		public override void _PhysicsProcess(double delta)

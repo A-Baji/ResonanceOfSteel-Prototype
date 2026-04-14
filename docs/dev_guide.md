@@ -47,6 +47,7 @@ The central class. Owns all combat state for one player. Updated exactly once pe
 - State machine dispatch (`ProcessState` → per-state handlers)
 - Input buffer management (enqueue → consume → age)
 - Shatter window tracking (frame counter since last block press)
+- Premature press penalty tracking (shared counter for whiffed parries/shatters)
 - Combat event handlers (called by Bridge after hit resolution)
 - Per-tick output flags (`HitboxActive`, `ArmorActive`, `CurrentTier`, `LastEvent`)
 
@@ -437,234 +438,312 @@ Each PlayerBridge has `SetCoordinatorDriven()` called to disable its individual 
 
 ### Framework
 
-GdUnit4 v4.4.1 via NuGet (`gdUnit4.api`). Tests live in `tests/` and cover the simulation layer (pure C#). All test classes use `[TestSuite]` and `[TestCase]` attributes with `partial` classes.
+GdUnit4 v4.4.1 via NuGet (`gdUnit4.api`). Tests live in `tests/` and cover the simulation layer (pure C#) and bridge integration. All test classes use `[TestSuite]` and `[TestCase]` attributes with `partial` classes. Bridge integration tests are annotated `[RequireGodotRuntime]` and use `ISceneRunner` to load `Game.tscn`.
 
 ### Test Suites
 
 | File | Tests | Coverage Area |
 |------|-------|---------------|
 | `InputBufferTests.cs` | 12 | TTL queue, priority order, expiry, duplicates |
-| `EconomyHandlerTests.cs` | 27 | Momentum, Vitality, Composure, stacks, fatigue, recovery |
-| `PlayerSimulationStateTests.cs` | 24 | State transitions, action lock, buffer preservation, RoW |
-| `AttackSystemTests.cs` | 33 | Coil→Swing→Recovery, frame data, armor, chip damage, stagger |
-| `EvasionSystemTests.cs` | 28 | Dodge/Jump 3-phase, fatigue degradation, direction restriction |
-| `ShatterClashDeathblowTests.cs` | 31 | Shatter window/cost/whiff, Clash guard, Deathblow triggers |
-| `ArchetypeDataTests.cs` | 39 | Frame data, multipliers, cross-archetype invariants |
-| **Total** | **194** | |
+| `EconomyHandlerTests.cs` | 39 | Momentum, Vitality, Composure, stacks, fatigue, recovery, edge cases |
+| `PlayerSimulationStateTests.cs` | 56 | State transitions, action lock, buffer preservation, RoW, penalty system |
+| `AttackSystemTests.cs` | 56 | Coil→Swing→Recovery, frame data, armor, chip damage, stagger, interrupts |
+| `EvasionSystemTests.cs` | 34 | Dodge/Jump 3-phase, fatigue degradation, direction restriction |
+| `ShatterClashDeathblowTests.cs` | 46 | Shatter window/cost/whiff, Clash, Deathblow, penalty interactions |
+| `CombatResolverTests.cs` | 35 | All 8 HitOutcome paths, resolution priority, knockback |
+| `ArchetypeDataTests.cs` | 56 | Frame data, multipliers, cross-archetype invariants, constants |
+| `BridgeIntegrationTests.cs` | 22 | Scene wiring, input flow, signals, RoundManager, fatigue edge detection |
+| **Total** | **356** (334 headless + 22 Godot-runtime) | |
 
 ### Running Tests
 
-Tests run inside the Godot editor via the GdUnit4 plugin, or via command line:
+- **`dotnet test`** runs 334 tests (all suites except `BridgeIntegrationTests`). The 22 `[RequireGodotRuntime]` tests are excluded when no Godot process is available, producing the "Failed to connect: Connection timeout" message — this is expected, not an error.
+- **Godot editor** (GdUnit4 plugin) runs all 356 tests including bridge integration.
+
+To run bridge tests from the command line, set `GODOT_BIN` to the Godot executable path before calling `dotnet test`.
+
+### Simulation Layer Coverage (~95%)
+
+All meaningful code paths in the simulation layer are covered. Remaining gaps are deliberately untested:
+
+- **`_ => new Idle()` fallback** in `ProcessState` — defensive dead code, unreachable via valid inputs
+- **`FatigueExited` signal** — momentum recovering from 0 back above 0 has no dedicated test (bridge integration only)
+- **Export overrides** (e.g., `StackDecayDelayFrames = 0`) — editor-only configuration edge cases
+
+### Impossible Game States — Audit Clean
+
+All `OnHitReceived(wasBlocked: true)` calls are preceded by `sim.Tick(BlockHeldInput())` to place the sim in Blocking state first. This was systematically verified and enforced. Other handlers (`OnParrySuccess`, `OnClash`, `OnDeathblowTriggered`) are called in isolation to test Economy mutation in the handler itself — this is valid since Bridge calls them post-Tick regardless of state.
+
+### Running Tests
+
+Tests run inside the Godot editor via the GdUnit4 plugin (all 356), or via command line for the headless simulation suite:
 ```
-godot --headless --run-tests
+dotnet test
 ```
+This runs 334 tests. The 22 `[RequireGodotRuntime]` tests in `BridgeIntegrationTests.cs` are excluded when no Godot process is reachable — "Failed to connect: Connection timeout" is expected output, not an error. To include bridge tests from the CLI, set the `GODOT_BIN` environment variable to your Godot executable path before running `dotnet test`.
 
 ### TestHelpers
 
-`tests/TestHelpers.cs` provides factory methods (`EmptyInput()`, `AttackInput(tier)`, `DodgeInput()`, etc.) to avoid repeating PlayerInput's 14-parameter constructor. Also provides `CreateSim()`, `TickN()`, `AdvanceToSwing()`, `AdvanceToRecovery()`, and `CompleteFullAttack()` for common test patterns.
+`tests/TestHelpers.cs` provides factory methods:
+- **Input factories**: `EmptyInput()`, `AttackInput(tier)`, `BlockParryPressInput()`, `BlockHeldInput()`, `DodgeInput()`, `JumpInput()`, `MoveForwardInput()`, `MoveSidewaysInput()`, `AirborneInput()`, `DodgeForwardInput()`, `BlockWalkForwardInput()`, `BlockWalkSidewaysInput()`, `RunForwardInput()`, `AttackWhileMovingInput(tier)`
+- **Sim helpers**: `CreateSim(archetype)`, `TickN(sim, n)`, `AdvanceToSwing(sim, tier)`, `AdvanceToRecovery(sim, tier)`, `CompleteFullAttack(sim, tier)`
 
 ---
 
 ## 13. Feature Verification Checklist
 
-Complete list of all implemented features for playtesting validation. Check off items as verified.
+Split into two lists. **Automated** items have passing `[TestCase]` entries in `tests/`. **Manual** items require running the project — they involve physics integration, visual behavior, or subjective feel that cannot be reliably captured in unit tests without excessive fragility.
 
-### Movement & Facing
-- [ ] Walk movement at `WalkSpeed` (4.0) in world-space direction (camera-relative)
-- [ ] Run movement at `RunSpeed` (7.0) when run held
-- [ ] Auto-face opponent (yaw snap each tick)
-- [ ] Boundary pushback on wall collision (invisible walls with pushback force)
-- [ ] Movement disabled during action-locked states (slide-to-stop instead)
-- [ ] Movement fully halted during Deathblow and Staggered states
+---
 
-### Action Commitment & Slide-to-Stop
-- [ ] All inputs blocked during Coil phase (cannot cancel wind-up)
-- [ ] All inputs blocked during Swing phase (committed to attack)
-- [ ] All inputs blocked during Recovery phase (no block-cancel)
-- [ ] All inputs blocked during Parrying window (6-frame commitment)
-- [ ] All inputs blocked during Dodge startup/active/recovery
-- [ ] All inputs blocked during Jump startup/active/recovery
-- [ ] All inputs blocked during Staggered state
-- [ ] All inputs blocked during Deathblow state
-- [ ] Buffered inputs during action-lock are preserved (not consumed) and fire after action ends
-- [ ] Slide-to-stop when entering action from movement (0.85× friction/frame, ~15 frames)
-- [ ] Blocking is NOT action-locked (can release to return to Idle)
+### Automated Verification
 
-### Input System
-- [ ] Input buffer TTL = 6 frames (inputs persist for ~100ms)
-- [ ] Buffer priority order: BlockParry > Attack > Dodge > Jump
+Check off when the corresponding test passes (run via GdUnit4).
+
+#### Input Buffer
+- [ ] Buffer TTL = 6 frames (inputs persist for ~100ms before expiry)
+- [ ] Priority order: BlockParry > Attack > Dodge > Jump
 - [ ] Duplicate inputs rejected (same action not buffered twice)
-- [ ] Edge-detected presses (JustPressed) vs held states (Held) distinguished correctly
-- [ ] P2 inputs mapped via PhysicalKeycode (Arrow Keys + Numpad)
-- [ ] Modifier buttons select attack tier: none=Standard, light=T0, heavy=T2, super=T3
-- [ ] Modifier released before attack press reverts to Standard
+- [ ] Expired entries removed after TTL reaches 0
+- [ ] Consume returns `None` on empty buffer
 
-### Attack System (Coil → Swing → Recovery)
-- [ ] T0 Flick/Pommel Strike — fastest, no stagger, conditional damage
-- [ ] T1 Cross Cut/Wide Slash — baseline attack
-- [ ] T2 Overhead/Crush — slower, higher damage, weapon recoil on block
-- [ ] T3 Lunge/Cleave — slowest, highest damage, active frame armor during swing
-- [ ] Coil frames match archetype frame data (Longsword: 4/8/16/24, Greatsword: 8/14/24/36)
-- [ ] Swing frames match archetype frame data
-- [ ] Recovery frames match archetype frame data
-- [ ] Frame Advantage Stacks reduce Coil frames on counter-attack (stacks × offset)
-- [ ] All stacks consumed when used for coil reduction
+#### Attack System
+- [ ] T0/T1/T2/T3 Coil frames match archetype data (Longsword: 4/8/16/24, Greatsword: 8/14/24/36)
+- [ ] Swing frames match archetype data
+- [ ] Recovery frames match archetype data
+- [ ] Coil → Swing → Recovery → Idle cycle completes correctly
+- [ ] Frame Advantage Stacks reduce Coil frames (stacks × `FrameAdvantageOffset`)
+- [ ] All stacks consumed when attack fires
 - [ ] Coil cannot be reduced below 1 frame
+- [ ] Attack input works from both Idle and Moving states
+- [ ] HitboxActive = true only during Swing phase
+- [ ] Hit during Coil staggers the attacker (attack interrupted)
+- [ ] Hit during Swing staggers the attacker (non-armored T1/T2)
+- [ ] Hit during Recovery staggers the player
+- [ ] `CurrentTier` set immediately when attack is entered; preserved through Recovery
+- [ ] `ResetState` clears pending shatter whiff recovery (no corrupt extra frames next attack)
 
-### Standard Block
-- [ ] No Momentum cost, always available (including during Fatigue)
-- [ ] Held block (BlockParryHeld) keeps player in Blocking state
-- [ ] Releasing block returns to Idle
-- [ ] Blocked T1-T3: chip vitality damage (20% via ChipDamageMultiplier)
-- [ ] Blocked T1-T3: full composure damage
-- [ ] Blocked T0: composure damage only (no vitality chip)
-- [ ] Knockback on blocked T1+ attacks based on move's KnockbackDistance
+#### Standard Block
+- [ ] No Momentum cost; always available including during Fatigue
+- [ ] Held block keeps player in Blocking state; release returns to Idle
+- [ ] Blocked T1-T3: chip vitality damage (20% of full), full composure damage
+- [ ] Blocked T0: composure damage only, zero vitality chip
 - [ ] Does NOT reset Frame Advantage Stacks
-- [ ] Cannot prevent Deathblow (any hit while vulnerable triggers execution even if blocked)
+- [ ] Cannot prevent Deathblow — any hit while vulnerable triggers execution even if blocked
 
-### Perfect Parry
-- [ ] Costs 0.5 Momentum (gated by CanAfford — reverts to Block if insufficient)
-- [ ] 6-frame active parry window
-- [ ] Grants +1 Frame Advantage Stack on successful parry
-- [ ] Transitions to Blocking when parry window expires
-- [ ] Unavailable during Fatigue (Momentum = 0)
+#### Perfect Parry
+- [ ] Costs 0.5 Momentum; reverts to Standard Block if insufficient (Fatigue)
+- [ ] Grants +1 Frame Advantage Stack on success
+- [ ] Active parry window = `EffectiveParryWindowFrames` (base 6, halved per penalty)
+- [ ] Transitions to Blocking when window expires
 
-### Knockback
-- [ ] Block knockback: pushes defender based on move's KnockbackDistance
-- [ ] Stagger knockback: 20% of block knockback (StaggerKnockbackMultiplier = 0.2)
-- [ ] Clash knockback: both players pushed apart based on clashing move tier
-- [ ] Knockback uses velocity impulse with 0.75× per-frame decay (smooth, not instant)
-- [ ] Active knockback (> 1.0 m/s) suppresses input movement (cannot walk through pushback)
-- [ ] Knockback eventually decays and allows input resumption
+#### Premature Press Penalty
+- [ ] Whiffed parry (window expired without success) increments penalty
+- [ ] Shatter whiff increments penalty
+- [ ] Each penalty halves effective window (ceil division: 6 → 3 → 2 → 1, min 1)
+- [ ] Penalty shared between parry and shatter
+- [ ] Successful parry resets penalty
+- [ ] Successful shatter resets penalty
+- [ ] `ResetState` clears penalty
+- [ ] After 30 frames of no `block_parry` press, penalty decays to 0
+- [ ] Inactivity timer resets on new `block_parry` press
 
-### Evasion — Dodge
-- [ ] Always available regardless of Momentum (never rejected)
-- [ ] Direction restriction: only lateral or backward (no forward dodge)
-- [ ] With sufficient Momentum (≥1.5): normal frames (3 startup / 12 active / 3 recovery)
-- [ ] Without sufficient Momentum: degraded frames (7 startup / 8 active / 3 recovery)
-- [ ] Momentum cost (1.5) deducted when affordable, not deducted when degraded
-- [ ] Three-phase structure: startup (vulnerable) → active (i-frames) → recovery (vulnerable)
+#### Evasion — Dodge
+- [ ] Only lateral or backward dodges accepted (no forward dodge)
+- [ ] Dodge with no stick input rejected
+- [ ] Costs 1.5 Momentum when affordable; degraded when unaffordable (no momentum deducted)
+- [ ] Normal frames: 3 startup / 12 active / 3 recovery = 18 total
+- [ ] Degraded frames: 7 startup / 8 active / 3 recovery = 18 total
+- [ ] Action-locked through all three phases
+- [ ] Consecutive dodge possible immediately after returning to Idle
 
-### Evasion — Jump
-- [ ] Always available regardless of Momentum (never rejected)
-- [ ] With sufficient Momentum (≥1.0): normal frames (3 startup / 22 active / 5 recovery)
-- [ ] Without sufficient Momentum: degraded frames (7 startup / 18 active / 5 recovery)
-- [ ] Momentum cost (1.0) deducted when affordable, not deducted when degraded
-- [ ] Three-phase structure: startup (grounded) → active (airborne) → recovery (landing)
+#### Evasion — Jump
+- [ ] No direction required
+- [ ] Costs 1.0 Momentum when affordable; degraded when unaffordable (no momentum deducted)
+- [ ] Normal frames: 3 startup / 22 active / 5 recovery = 30 total
+- [ ] Degraded frames: 7 startup / 18 active / 5 recovery = 30 total
 - [ ] Ground contact during active phase triggers early transition to recovery
+- [ ] Action-locked through all three phases
+- [ ] Consecutive jump possible immediately after returning to Idle
 
-### Shatter Technique
-- [ ] Activates when attacker inputs block_parry during Swing phase within parry window
-- [ ] Costs 3.0 Momentum (paid on activation regardless of outcome)
-- [ ] Shatter on Parry: breaks parry — full damage + stagger to defender
-- [ ] Shatter on Block: whiff — no damage dealt, extra recovery (20 frames)
-- [ ] Shatter on unblocked: whiff — no damage dealt, extra recovery (20 frames)
+#### Shatter Technique
+- [ ] Shatter window active for `EffectiveParryWindowFrames` frames after last `block_parry` press
+- [ ] Initial shatter window is false before any `block_parry` press
+- [ ] Costs 3.0 Momentum (paid regardless of outcome)
+- [ ] Shatter against Parry: full damage + stagger (ShatterLanded)
+- [ ] Shatter against Block: whiff — no damage, extra recovery frames
+- [ ] Shatter against unblocked: whiff — no damage, extra recovery frames
+- [ ] Shatter that cannot be afforded degrades to normal hit/block resolution
 - [ ] No momentum reward on shatter whiff
-- [ ] Shatter whiff penalty frames (20) are sufficiently punishing
 
-### Clash System
-- [ ] Triggers when both players swing same tier within the same resolve pass
-- [ ] Both players receive clash_momentum_surge (2.0)
-- [ ] Both players enter Recovery (ClashRecoveryFrames = 8)
-- [ ] Both players receive symmetric knockback based on clashing move tier
-- [ ] Clash double-processing guard (ClashedThisFrame flag) prevents duplicate resolution
-- [ ] Two-pass architecture ensures symmetric clash detection
+#### Clash System
+- [ ] Same tier + both hitboxes active = Clash (neither gets stagger)
+- [ ] Different tiers do NOT clash
+- [ ] Both players receive `ClashMomentumSurge` (2.0)
+- [ ] Both players enter Recovery (`ClashRecoveryFrames` = 8)
+- [ ] `ClashedThisFrame` guard prevents double-processing
+- [ ] `OnClash` forces Recovery from any state (Idle, Blocking, Swing, etc.)
 
-### Stagger Hierarchy
-- [ ] T0 (Flinchless): no stagger, no interrupt — conditional damage only
-- [ ] T0 unblocked: minor vitality damage
-- [ ] T0 blocked: minor composure buildup (no vitality)
-- [ ] T1 (Standard): interrupts T1/T2 wind-up/swing, T3 wind-up only
-- [ ] T2 (Heavy): same interrupt as T1, causes weapon recoil on block
-- [ ] T3 (Committed): active frame armor during Swing phase
-- [ ] T3 armor absorbs T1/T2 hits but takes 1.5× vitality damage (ArmorTradeLethality)
-- [ ] T3 armor disabled during Fatigue
-- [ ] Stagger frames are per-archetype per-tier (from MoveData)
+#### Stagger Hierarchy
+- [ ] T0 unblocked: minor vitality damage only (no composure, no stagger)
+- [ ] T0 blocked: composure damage only (no vitality chip)
+- [ ] T3 armor active during Swing phase only (not Coil)
+- [ ] T3 armor disabled when Fatigued
+- [ ] T3 armor trade: 1.5× vitality to defender, no stagger
+- [ ] Stagger duration matches per-archetype per-tier `StaggerFrames` from MoveData
+- [ ] Stagger returns to Idle when frames expire
 
-### Momentum Economy
-- [ ] Range: 0.0–8.0 (8 segments), starts at 4.0
-- [ ] Walking toward opponent generates momentum (0.05/frame, 60° cone)
-- [ ] Running toward opponent generates momentum (0.1/frame, 60° cone)
-- [ ] RoW generation works in Idle, Moving, and Blocking states
-- [ ] RoW 60° cone prevents strafing exploit (dot-product threshold)
-- [ ] Landing any strike (hit or blocked) generates 0.5 momentum
-- [ ] Clash generates 2.0 momentum surge
-- [ ] Fatigue at Momentum = 0: disables Parry, disables T3 armor, degrades evasion frames
-- [ ] Momentum visible only in owning player's viewport (hidden from opponent)
+#### Momentum Economy
+- [ ] Starts at 4.0 (half of max 8.0)
+- [ ] Walking toward opponent (+0.05/frame, 60° cone) generates momentum
+- [ ] Running toward opponent (+0.1/frame) generates more than walking
+- [ ] RoW does not generate while action-locked or moving perpendicular/away
+- [ ] `IsMovingToward` returns false when opponent is at the same position
+- [ ] `BaseMomentumOnHit` (0.5) added on every landed or blocked hit
+- [ ] ClashSurge (2.0) applied on clash
+- [ ] IsFatigued when Momentum ≤ 0: disables Parry, T3 armor; degrades evasion frames
 
-### Composure Economy
-- [ ] Range: 0.0–1.0 (Deathblow at ≥1.0)
-- [ ] Recovery paused for 90 frames (1.5s) after taking composure damage
-- [ ] Recovery rate = 0.0036/frame × V² (quadratic vitality scaling)
-- [ ] At 50% HP → 25% recovery rate; at 25% HP → 6.25%
+#### Composure Economy
+- [ ] Recovery paused for 90 frames after any composure damage
+- [ ] Recovery cooldown resets on each new composure damage instance
+- [ ] Recovery rate = `ComposureBaseRecoveryRate` × Vitality² (quadratic scaling)
 - [ ] Terminal vitality (< 0.1) halts recovery entirely
-- [ ] Composure builds meaningfully during sustained pressure
-- [ ] Composure recovers noticeably during lulls (with cooldown respected)
-- [ ] Recovery rate (0.0036) feels balanced for game pace
+- [ ] Composure damage still applies even at Terminal vitality
 
-### Vitality Economy
-- [ ] Range: 0.0–1.0
-- [ ] Damage formula: base_vitality_damage (0.08) × move multiplier
-- [ ] Chip damage on block: 20% of normal vitality damage (T1-T3 only)
-- [ ] Vitality reaching 0 makes Deathblow inevitable
+#### Vitality Economy
+- [ ] Damage = `BaseVitalityDamage` (0.08) × move vitality multiplier
+- [ ] Chip damage = 20% of full damage on blocked T1-T3
+- [ ] Vitality at 0 makes player DeathblowVulnerable
 
-### Frame Advantage Stacks
-- [ ] +1 stack per successful Perfect Parry
-- [ ] Each stack = 1 frame of Coil reduction on next counter-attack
-- [ ] All stacks consumed on counter-attack (reset to 0)
-- [ ] Reset on: non-parried hit received (blocked or unblocked)
-- [ ] Standard block does NOT reset stacks
-- [ ] Gradual decay: starts after 180 frames (3s) of no parry activity
-- [ ] Decay rate: lose 1 stack per 60 frames (1s) during decay
+#### Frame Advantage Stacks
+- [ ] +1 stack per `OnParrySuccess`
+- [ ] All stacks consumed when coil reduction fires
+- [ ] `ConsumeFrameAdvantageCoilReduction` returns 0 when stacks = 0
+- [ ] Reset on any hit received (blocked or unblocked)
+- [ ] Not reset by entering Blocking state
+- [ ] Decay begins after 180 frames (3s) of no parry; -1 every 60 frames (1s)
+- [ ] Decay timer resets after `ConsumeFrameAdvantageCoilReduction`
+- [ ] Stack count never goes below 0
 
-### Deathblow System
-- [ ] Triggers when Composure ≥ 1.0 or Vitality ≤ 0, then any strike lands
-- [ ] Any tier can trigger Deathblow (including T0)
-- [ ] Blocking cannot prevent Deathblow
-- [ ] Deathblow state: all inputs blocked, movement halted
-- [ ] Receiver loses 1 life on Deathblow
+#### Deathblow System
+- [ ] Triggers on any hit (blocked or unblocked) once `IsDeathblowVulnerable`
+- [ ] `IsDeathblowVulnerable` when Composure ≥ 1.0 OR Vitality ≤ 0
+- [ ] Deathblow state is action-locked, movement halted, persists across ticks
+- [ ] `ResetState` clears Deathblow and returns to Idle
 
-### Round Structure
-- [ ] 4 lives per player
-- [ ] 210-second round timer
-- [ ] Timeout: higher Vitality wins, loser loses 1 life
-- [ ] On life loss: full reset (positions, Vitality, Composure, Momentum, stacks)
-- [ ] Match ends when one player reaches 0 lives
-- [ ] HUD lives display initializes correctly at round start
+#### Action Commitment & Buffer
+- [ ] All inputs ignored during Coil, Swing, Recovery, Parrying, Dodging, Jumping, Staggered, Deathblow
+- [ ] Buffer preserved (not consumed) during action-locked states
+- [ ] Buffer NOT consumed while in Blocking state
+- [ ] Attack pressed during Blocking is buffered and fires after block released
+- [ ] `block_parry` pressed late in Recovery is buffered and fires as Parrying after Idle
 
-### HUD & Presentation
-- [ ] Vitality bar (red, continuous)
-- [ ] Composure bar (yellow-orange, fills toward center)
-- [ ] Momentum gauge (8 segments)
-- [ ] Stack counter (numerical)
-- [ ] Timer display (M:SS format)
-- [ ] Lives display per player
-- [ ] Tweened bar transitions (smooth, not snapping)
+#### Right-of-Way (RoW)
+- [ ] RoW generated in Idle, Moving, and Blocking states only
+- [ ] No RoW during action-locked states
+- [ ] Perpendicular movement does not generate RoW
+- [ ] Moving away does not generate RoW
 
-### Camera & Split-Screen
-- [ ] Two viewports (50% screen each) sharing same World3D
-- [ ] Each camera tracks behind/above owner player
-- [ ] Auto-rotation toward opponent
-- [ ] SpringArm3D prevents environment clipping
-- [ ] Camera height adjusts with opponent distance
+#### Input Modifier Tier Selection
+- [ ] No modifier held → Standard (T1)
+- [ ] `modifier_light` → T0; `modifier_heavy` → T2; `modifier_super` → T3
+- [ ] Multiple modifiers: Super > Heavy > Light (last `if` wins)
 
-### Debug Overlay
-- [ ] F3 toggles debug HUD visibility
-- [ ] Per-player state name with frame countdown displayed
-- [ ] Economy values shown numerically (Vitality, Composure, Momentum)
-- [ ] Flags displayed: ActionLocked, Hitbox, Armor, Fatigued, Terminal, DB Vulnerable
-- [ ] Input buffer queue count shown
-- [ ] Last combat event displayed
-- [ ] FPS counter shown
-- [ ] Debug HUD starts hidden by default
+#### Bridge Integration (`[RequireGodotRuntime]`)
+- [ ] Both players start in Idle after scene load
+- [ ] Default archetypes assigned: P1 = Longsword, P2 = Greatsword
+- [ ] Initial economy values: Momentum 4.0, Vitality 1.0, Composure 0.0
+- [ ] Export defaults match spec values (momentum costs, frame constants, speeds)
+- [ ] Block-walk speed is lower than normal walk speed
+- [ ] Run is suppressed while blocking
+- [ ] Slide-to-stop: non-zero velocity on first frame of committed action from movement
+- [ ] Both players wired by GameCoordinator (HitboxManagers assigned, opponents cross-wired)
+- [ ] Attack input flows through bridge to Coil state
+- [ ] Block input flows through bridge to Parrying/Blocking state
+- [ ] `HitLanded`, `ParrySuccess`, `ShatterWhiff`, `ClashEvent` signals emitted correctly
+- [ ] `FullReset` restores all economy values; `ResetState` returns to Idle
+- [ ] `PrematureBlockPenalties` and `EffectiveParryWindow` accessible via bridge
+- [ ] `FatigueEntered` signal fires exactly when Momentum reaches 0 (edge-detected)
+- [ ] `RoundManager`: P1 Deathblow decrements P2 lives; `LivesChanged` signal fires
 
-### Stage System
-- [ ] Small stage (10m × 10m) — close-range testing
-- [ ] Medium stage (20m × 20m) — balanced testing
-- [ ] Large stage (35m × 35m) — spacing/RoW testing
-- [ ] Invisible boundary walls with pushback
+---
 
-### Two-Pass Architecture
-- [ ] GameCoordinator drives TickPhase on both players before ResolvePhase
-- [ ] Individual PlayerBridge._PhysicsProcess disabled via SetCoordinatorDriven
-- [ ] Symmetric clash detection (no P1 advantage from tick order)
+### Manual Verification (Playtesting)
+
+Verify by running the project. These behaviors involve physics integration, visual output, or subjective feel beyond the reach of unit tests.
+
+#### Movement Feel
+- [x] Walk speed (4.0) and run speed (7.0) feel appropriately paced for the stage sizes
+- [x] Auto-facing opponent: character rotates smoothly to track, no snap artifacts
+- [x] Slide-to-stop looks natural over ~15 frames; not too stiff, not too floaty
+- [x] Deathblow/Staggered halt is immediate and readable
+
+#### Knockback Physics
+- [x] Block knockback: defender is pushed back a noticeable distance on T1-T3 hits
+- [x] Stagger knockback (20% of block): shorter push, clearly less than blocking
+- [x] Clash knockback: both players pushed apart symmetrically
+- [ ] Knockback velocity decays smoothly over multiple frames (0.75× per frame)
+- [x] While knockback is active, player cannot walk through it (movement suppressed)
+- [x] T0 attacks produce no knockback on block
+- [x] Knockback from T2 (weapon recoil) feels more disruptive than T1
+
+#### Block-Walk Feel
+- [x] Block-walk speed (2.0) visibly slower than normal walk (4.0); distinctly slower than run (7.0)
+- [x] Block-walk movement is fluid; no stuttering when holding block + stick input
+
+#### Input System (Two-Player)
+- [x] P2 controls (Arrow Keys + Numpad) fully functional independent of P1
+- [x] Both players can act simultaneously with no cross-interference
+
+#### Boundary Pushback
+- [x] Invisible walls push players back at `BoundaryPushbackStrength` (5.0)
+- [x] Pushback is not exploitable for locking an opponent against a wall (force feels appropriate)
+
+#### HUD & Presentation
+- [x] Vitality bar depletes smoothly; tween (0.25s, Quad out) tracks damage without snapping
+- [x] Composure bar fills smoothly; tween visible during pressure sequences
+- [x] Composure recovery (0.0036/frame × V²) is visually perceptible during lulls; faster at full health, negligible near zero
+- [x] Momentum gauge (8 segments) updates correctly without flickering
+- [x] Stack counter (3D or HUD) increments on parry, resets on hit; decay is visible over time
+- [x] Timer counts down in `M:SS` format; shows `0:00` on expiry
+- [x] Lives display initializes correctly; decrements only on Deathblow or timeout
+
+#### Combat Event Feedback
+- [ ] `HitLanded` / `HitBlocked` signals wire to visible HUD effects (color flash, screen shake, etc.)
+- [ ] `ParrySuccess` gives distinct visual/audio feedback vs `ShatterLanded`
+- [ ] `ShatterWhiff` punishment (extra recovery) is readable from animation
+- [ ] `ClashEvent` mutual knockback is symmetric and visually satisfying
+- [ ] `FatigueEntered` / `FatigueExited` signals are visually indicated to the owning player
+- [ ] `DeathblowTriggered` execution is clearly communicated
+
+#### Camera & Split-Screen
+- [ ] Both viewports occupy 50% of screen with no overlap or gap
+- [x] Each camera tracks behind/above its owning player
+- [x] Yaw + pitch interpolation toward opponent feels responsive without snapping
+- [x] `SpringArm3D` prevents camera clipping through stage geometry
+- [x] Camera height increases slightly as opponent approaches (closer = higher angle)
+- [x] `TopLevel = true` — camera does not inherit player's rotation
+
+#### Momentum Visibility (§4.1 Design Intent)
+- [ ] Momentum gauge is visible only in the owning player's viewport; opponent's viewport shows no gauge (or a blank/hidden gauge per `momentum_ui_visibility` setting)
+
+#### Debug Overlay
+- [x] F3 toggles debug HUD; starts hidden at launch
+- [x] All fields update correctly: state name, tier, Vitality/Composure/Momentum values, flags, buffer count, last event
+- [x] Penalty and effective window fields visible and correct
+- [x] FPS counter accurate and readable
+
+#### Stage System
+- [x] Small (10m), Medium (20m), Large (35m) stages load without error
+- [x] Floor mesh and collision correctly sized; no gaps or misaligned walls
+- [x] Invisible boundary walls stop movement; pushback prevents wall-sticking
+
+#### Round Structure Feel
+- [x] Timeout fires at 210 seconds; vitality tiebreak winner resolved correctly
+- [x] Exact vitality tie: no life lost, new round starts (verify with equal damage taken)
+- [x] 2-second delay between rounds feels appropriately paced
+- [x] Full reset between rounds: positions, all economy values, states restored
+- [ ] Match ends correctly when one player reaches 0 lives; winner displayed
+
+#### Two-Pass Architecture (Fallback)
+- [ ] Standalone `PlayerBridge._PhysicsProcess` (without `GameCoordinator`) still runs correctly for solo testing scenes

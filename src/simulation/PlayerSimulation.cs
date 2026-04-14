@@ -75,10 +75,41 @@ namespace ResonanceOfSteel.Simulation
 
 		// ── Shatter timing ─────────────────────────────────────────────
 		private int _blockPressedFramesAgo = int.MaxValue / 2;
-		public bool IsInShatterWindow => _blockPressedFramesAgo < _constants.ParryWindowFrames;
+		public bool IsInShatterWindow => _blockPressedFramesAgo < EffectiveParryWindowFrames;
+
+		// ── Premature press penalty queries ─────────────────────────────
+		public int PrematureBlockPenalties => _prematureBlockPenalties;
+
+		/// <summary>
+		/// Parry/shatter window after premature press penalties.
+		/// Each whiffed parry or shatter halves the window (ceil, min 1).
+		/// Resets on successful parry or shatter.
+		/// </summary>
+		public int EffectiveParryWindowFrames
+		{
+			get
+			{
+				int window = _constants.ParryWindowFrames;
+				for (int i = 0; i < _prematureBlockPenalties; i++)
+				{
+					window = (window + 1) / 2;
+					if (window <= 1) return 1;
+				}
+				return window;
+			}
+		}
 
 		// ── Shatter whiff penalty ──────────────────────────────────────
 		private bool _shatterWhiffRecoveryPending;
+
+		// ── Premature press penalty ────────────────────────────────────
+		// Tracks failed parry/shatter attempts. Each whiff halves the
+		// effective window (ceil, min 1). Resets on success or inactivity.
+		private int _prematureBlockPenalties;
+		private bool _parrySucceededThisAttempt;
+
+		// Frames of no block_parry press before penalty resets (Sekiro-style).
+		private const int PenaltyInactivityResetFrames = 30;
 
 		// ── Clash double-processing guard ──────────────────────────────
 		public bool ClashedThisFrame { get; private set; }
@@ -114,6 +145,11 @@ namespace ResonanceOfSteel.Simulation
 				_blockPressedFramesAgo = 0;
 			else if (_blockPressedFramesAgo < int.MaxValue / 2)
 				_blockPressedFramesAgo++;
+
+			// Premature press penalty decays after inactivity (Sekiro-style).
+			// If the player stops pressing block_parry for long enough, reset.
+			if (_blockPressedFramesAgo >= PenaltyInactivityResetFrames && _prematureBlockPenalties > 0)
+				_prematureBlockPenalties = 0;
 
 			// Composure recovers every frame unless Terminal.
 			Economy.TickComposureRecovery();
@@ -189,7 +225,10 @@ namespace ResonanceOfSteel.Simulation
 			{
 				case PlayerInputAction.BlockParry:
 					if (Economy.CanAfford(_constants.PerfectParryCost))
-						return new Parrying(_constants.ParryWindowFrames);
+					{
+						_parrySucceededThisAttempt = false;
+						return new Parrying(EffectiveParryWindowFrames);
+					}
 					return new Blocking();
 
 				case PlayerInputAction.Attack:
@@ -281,7 +320,11 @@ namespace ResonanceOfSteel.Simulation
 		{
 			int framesLeft = s.FramesLeft - 1;
 			if (framesLeft <= 0)
+			{
+				if (!_parrySucceededThisAttempt)
+					_prematureBlockPenalties++;
 				return new Blocking();
+			}
 			return s with { FramesLeft = framesLeft };
 		}
 
@@ -356,6 +399,8 @@ namespace ResonanceOfSteel.Simulation
 
 		public void OnParrySuccess()
 		{
+			_parrySucceededThisAttempt = true;
+			_prematureBlockPenalties = 0;
 			Economy.SpendMomentum(_constants.PerfectParryCost);
 			Economy.IncrementFrameAdvantage();
 			LastEvent = CombatEvent.ParrySuccess;
@@ -385,6 +430,7 @@ namespace ResonanceOfSteel.Simulation
 
 		public void OnShatterLanded()
 		{
+			_prematureBlockPenalties = 0;
 			Economy.AddMomentumOnHit();
 			Economy.ResetFrameAdvantage();
 			LastEvent = CombatEvent.ShatterEvent;
@@ -397,6 +443,7 @@ namespace ResonanceOfSteel.Simulation
 		/// </summary>
 		public void OnShatterWhiff()
 		{
+			_prematureBlockPenalties++;
 			_shatterWhiffRecoveryPending = true;
 			LastEvent = CombatEvent.ShatterWhiff;
 		}
@@ -434,6 +481,8 @@ namespace ResonanceOfSteel.Simulation
 			_state = new Idle();
 			_blockPressedFramesAgo = int.MaxValue / 2;
 			_shatterWhiffRecoveryPending = false;
+			_prematureBlockPenalties = 0;
+			_parrySucceededThisAttempt = false;
 			_buffer.Clear();
 		}
 	}

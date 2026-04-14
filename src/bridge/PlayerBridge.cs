@@ -362,6 +362,8 @@ namespace ResonanceOfSteel.Bridge
 		public bool GetIsArmorActive() => _sim.ArmorActive;
 		public string GetArchetypeName() => Archetype.ToString();
 		public string GetLastEventName() => _sim.LastEvent.ToString();
+		public int GetPrematureBlockPenalties() => _sim.PrematureBlockPenalties;
+		public int GetEffectiveParryWindow() => _sim.EffectiveParryWindowFrames;
 
 		// ── Shatter / Clash API ─────────────────────────────────────────
 		public bool IsInShatterWindow() => _sim.IsInShatterWindow;

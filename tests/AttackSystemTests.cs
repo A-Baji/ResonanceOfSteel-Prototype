@@ -210,6 +210,7 @@ namespace ResonanceOfSteel.Tests
 		public void T0_Blocked_Only_Composure_Damage()
 		{
 			var sim = CreateSim();
+			sim.Tick(BlockHeldInput()); // enter Blocking state
 			double vitBefore = (double)sim.Economy.Vitality;
 			double compBefore = (double)sim.Economy.Composure;
 			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
@@ -224,6 +225,7 @@ namespace ResonanceOfSteel.Tests
 		public void Blocked_T1_Deals_Chip_Vitality_And_Full_Composure()
 		{
 			var sim = CreateSim();
+			sim.Tick(BlockHeldInput()); // enter Blocking state
 			double vitBefore = (double)sim.Economy.Vitality;
 			double compBefore = (double)sim.Economy.Composure;
 			sim.OnHitReceived(Fixed64.One, Fixed64.One,
@@ -307,6 +309,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Economy.IncrementFrameAdvantage();
+			sim.Tick(BlockHeldInput()); // enter Blocking state
 			sim.OnHitReceived(Fixed64.One, Fixed64.One,
 				wasBlocked: true, AttackTier.Standard, staggerFrames: 12);
 			AssertThat(sim.Economy.FrameAdvantageStacks).IsEqual(0);
@@ -402,6 +405,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			var move = LongswordData.Instance.GetMoveData(AttackTier.Heavy);
+			sim.Tick(BlockHeldInput()); // enter Blocking state
 			double vitBefore = (double)sim.Economy.Vitality;
 			double compBefore = (double)sim.Economy.Composure;
 			sim.OnHitReceived(move.VitalityMultiplier, move.ComposureMultiplier,
@@ -428,6 +432,196 @@ namespace ResonanceOfSteel.Tests
 			var sim = CreateSim();
 			sim.OnHitLanded(Fixed64.One, Fixed64.One, wasBlocked: true);
 			AssertThat(sim.LastEvent).IsEqual(CombatEvent.HitBlocked);
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  ADDITIONAL COVERAGE — Hit economics and stagger mechanics
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void T0_Blocked_No_Vitality_Damage()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockHeldInput()); // enter Blocking state
+			double vitalityBefore = (double)sim.Economy.Vitality;
+			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
+				wasBlocked: true, AttackTier.Light, staggerFrames: 0);
+			// T0 blocked: composure only, no vitality chip
+			AssertThat((double)sim.Economy.Vitality).IsEqual(vitalityBefore);
+		}
+
+		[TestCase]
+		public void T0_Blocked_Applies_Composure()
+		{
+			var sim = CreateSim();
+			sim.Tick(BlockHeldInput()); // enter Blocking state
+			double composureBefore = (double)sim.Economy.Composure;
+			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
+				wasBlocked: true, AttackTier.Light, staggerFrames: 0);
+			AssertThat((double)sim.Economy.Composure).IsGreater(composureBefore);
+		}
+
+		[TestCase]
+		public void T0_Unblocked_No_Composure_Damage()
+		{
+			var sim = CreateSim();
+			double composureBefore = (double)sim.Economy.Composure;
+			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
+				wasBlocked: false, AttackTier.Light, staggerFrames: 0);
+			// T0 unblocked: vitality only, no composure
+			AssertThat((double)sim.Economy.Composure).IsEqual(composureBefore);
+		}
+
+		[TestCase]
+		public void T0_Unblocked_Applies_Vitality()
+		{
+			var sim = CreateSim();
+			double vitalityBefore = (double)sim.Economy.Vitality;
+			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
+				wasBlocked: false, AttackTier.Light, staggerFrames: 0);
+			AssertThat((double)sim.Economy.Vitality).IsLess(vitalityBefore);
+		}
+
+		[TestCase]
+		public void T0_Unblocked_No_Stagger()
+		{
+			var sim = CreateSim();
+			sim.OnHitReceived((Fixed64)0.2, (Fixed64)0.1,
+				wasBlocked: false, AttackTier.Light, staggerFrames: 0);
+			// T0 has 0 stagger frames — should NOT enter Staggered state
+			AssertThat(sim.IsStaggered).IsFalse();
+		}
+
+		[TestCase]
+		public void Stagger_Frames_Match_Longsword_T1()
+		{
+			var sim = CreateSim();
+			var move = LongswordData.Instance.GetMoveData(AttackTier.Standard);
+			sim.OnHitReceived(move.VitalityMultiplier, move.ComposureMultiplier,
+				wasBlocked: false, AttackTier.Standard, staggerFrames: move.StaggerFrames);
+			AssertThat(sim.DebugStateName).Contains("Staggered");
+			AssertThat(sim.DebugStateName).Contains($"[{move.StaggerFrames}f]");
+		}
+
+		[TestCase]
+		public void Stagger_Frames_Match_Greatsword_T2()
+		{
+			var sim = CreateSim(GreatswordData.Instance);
+			var move = GreatswordData.Instance.GetMoveData(AttackTier.Heavy);
+			sim.OnHitReceived(move.VitalityMultiplier, move.ComposureMultiplier,
+				wasBlocked: false, AttackTier.Heavy, staggerFrames: move.StaggerFrames);
+			AssertThat(sim.DebugStateName).Contains("Staggered");
+			AssertThat(sim.DebugStateName).Contains($"[{move.StaggerFrames}f]");
+		}
+
+		[TestCase]
+		public void Deathblow_Triggers_Even_On_Blocked_Hit()
+		{
+			var sim = CreateSim();
+			// Make deathblow-vulnerable via composure
+			sim.Economy.ApplyComposureDamage((Fixed64)20.0);
+			AssertThat(sim.Economy.IsDeathblowVulnerable).IsTrue();
+			sim.Tick(BlockHeldInput()); // enter Blocking state
+			// Blocked hit still triggers deathblow
+			sim.OnHitReceived(Fixed64.One, Fixed64.One,
+				wasBlocked: true, AttackTier.Standard, staggerFrames: 12);
+			AssertThat(sim.IsInDeathblow).IsTrue();
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  Attack from Moving state + hit interruption scenarios
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void Attack_While_Moving_Enters_Coil()
+		{
+			var sim = CreateSim();
+			sim.Tick(MoveForwardInput()); // enter Moving state
+			AssertThat(sim.DebugStateName).IsEqual("Moving");
+			// Attack while still holding forward movement
+			sim.Tick(AttackWhileMovingInput());
+			AssertThat(sim.DebugStateName).Contains("Coil");
+		}
+
+		[TestCase]
+		public void Hit_During_Coil_Staggers_Player()
+		{
+			// Spec §6: T1 interrupts T1/T2 during Wind-up
+			var sim = CreateSim();
+			sim.Tick(AttackInput()); // enter Coil
+			AssertThat(sim.DebugStateName).Contains("Coil");
+			sim.OnHitReceived(Fixed64.One, Fixed64.One,
+				wasBlocked: false, AttackTier.Standard, staggerFrames: 12);
+			AssertThat(sim.IsStaggered).IsTrue();
+		}
+
+		[TestCase]
+		public void Hit_During_Swing_Staggers_Attacker()
+		{
+			// Spec §6: T1 interrupts T1/T2 during Swing (non-armored)
+			var sim = CreateSim();
+			AdvanceToSwing(sim, AttackTier.Standard);
+			sim.Tick(EmptyInput()); // process one Swing frame (hitbox active)
+			AssertThat(sim.HitboxActive).IsTrue();
+			sim.OnHitReceived(Fixed64.One, Fixed64.One,
+				wasBlocked: false, AttackTier.Standard, staggerFrames: 12);
+			AssertThat(sim.IsStaggered).IsTrue();
+		}
+
+		[TestCase]
+		public void Hit_During_Recovery_Staggers_Player()
+		{
+			// Recovery is vulnerable — any unblocked hit staggers
+			var sim = CreateSim();
+			AdvanceToRecovery(sim, AttackTier.Standard);
+			sim.Tick(EmptyInput()); // process one Recovery frame
+			AssertThat(sim.DebugStateName).Contains("Recovery");
+			sim.OnHitReceived(Fixed64.One, Fixed64.One,
+				wasBlocked: false, AttackTier.Standard, staggerFrames: 12);
+			AssertThat(sim.IsStaggered).IsTrue();
+		}
+
+		// ══════════════════════════════════════════════════════════════
+		//  CurrentTier lifecycle
+		// ══════════════════════════════════════════════════════════════
+
+		[TestCase]
+		public void CurrentTier_Set_On_Attack_Entry()
+		{
+			// TransitionToCoil sets CurrentTier immediately when attack is consumed
+			var sim = CreateSim();
+			sim.Tick(AttackInput(AttackTier.Heavy));
+			AssertThat(sim.CurrentTier).IsEqual(AttackTier.Heavy);
+		}
+
+		[TestCase]
+		public void CurrentTier_Preserved_Through_Recovery()
+		{
+			// ProcessRecovery does not reset CurrentTier, which preserves tier
+			// semantics for CombatResolver clash detection.
+			var sim = CreateSim();
+			AdvanceToRecovery(sim, AttackTier.Heavy);
+			sim.Tick(EmptyInput()); // one Recovery frame
+			AssertThat(sim.CurrentTier).IsEqual(AttackTier.Heavy);
+		}
+
+		[TestCase]
+		public void ResetState_Clears_ShatterWhiff_Recovery_Pending()
+		{
+			// If _shatterWhiffRecoveryPending is set and then ResetState is called
+			// (e.g. round end mid-attack), the next attack must NOT add extra frames.
+			var sim = CreateSim();
+			AdvanceToSwing(sim, AttackTier.Standard);
+			sim.OnShatterWhiff(); // sets recovery pending
+			sim.ResetState();     // should clear the flag
+			// Fresh attack — AdvanceToSwing already calls sim.Tick(AttackInput) internally.
+			// Do NOT call sim.Tick(AttackInput) separately first: that would enter Coil,
+			// and then AdvanceToSwing's own attack tick would not re-transition (Coil is
+			// action-locked), causing it to end one frame inside Swing instead of at entry.
+			AdvanceToSwing(sim, AttackTier.Standard);
+			var move = LongswordData.Instance.GetMoveData(AttackTier.Standard);
+			TickN(sim, move.SwingFrames); // complete Swing → Recovery
+			AssertThat(sim.DebugStateName).IsEqual($"Recovery T1 [{move.RecoveryFrames}f]");
 		}
 	}
 }
