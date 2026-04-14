@@ -49,6 +49,10 @@ namespace ResonanceOfSteel.Bridge
 
 			if (_hitRegisteredThisSwing) return;
 
+			// If a Clash was already resolved by the opponent's HitboxManager this frame,
+			// skip further resolution to prevent the second pass from treating it as a Hit.
+			if (OwnerBridge.IsClashedThisFrame()) return;
+
 			if (QueryHitbox())
 				ResolveHit();
 		}

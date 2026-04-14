@@ -12,8 +12,9 @@ namespace ResonanceOfSteel.Simulation
 		Fixed64 JumpCost,                   // 1.0 — Momentum cost per jump
 		Fixed64 ShatterCost,                // 3.0 — Momentum cost for Shatter modifier
 		Fixed64 BaseMomentumOnHit,          // 0.5 — gained on any strike landing or being blocked
-		Fixed64 WalkMomentumRate,           // 0.05 per frame when walking toward opponent
-		Fixed64 RunMomentumRate,            // 0.1 per frame when running toward opponent
+		Fixed64 RoWMomentumPerUnit,         // Momentum gained per unit distance moved toward opponent
+		Fixed64 RetreatDrainPerUnit,        // Momentum lost per unit distance moved away from opponent
+		Fixed64 RoWMaxRangeSquared,         // Squared max distance to opponent for RoW to apply
 		Fixed64 ClashMomentumSurge,         // 2.0 — gained on Clash event
 		Fixed64 ComposureBaseRecoveryRate,  // 0.0036 per frame (B_rate in the formula, 20% faster than Sekiro baseline)
 		int ComposureRecoveryCooldownFrames, // 90 — frames after composure damage before recovery starts
@@ -47,8 +48,9 @@ namespace ResonanceOfSteel.Simulation
 			JumpCost: (Fixed64)1.0,
 			ShatterCost: (Fixed64)3.0,
 			BaseMomentumOnHit: (Fixed64)0.5,
-			WalkMomentumRate: (Fixed64)0.05,
-			RunMomentumRate: (Fixed64)0.1,
+			RoWMomentumPerUnit: (Fixed64)0.375,
+			RetreatDrainPerUnit: (Fixed64)0.1875,
+			RoWMaxRangeSquared: (Fixed64)81.0,  // 9 units max range
 			ClashMomentumSurge: (Fixed64)2.0,
 			ComposureBaseRecoveryRate: (Fixed64)0.0036,
 			ComposureRecoveryCooldownFrames: 90,

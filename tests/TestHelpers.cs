@@ -92,6 +92,45 @@ namespace ResonanceOfSteel.Tests
 			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
 		);
 
+		/// <summary>Movement toward opponent with custom own position (for RoW displacement tests).</summary>
+		public static PlayerInput MoveForwardInputAt(Fixed64 ownZ, bool running = false) => new(
+			moveX: Fixed64.Zero, moveZ: Fixed64.One,
+			runHeld: running,
+			attackJustPressed: false,
+			blockParryHeld: false, blockParryJustPressed: false,
+			dodgeJustPressed: false, jumpJustPressed: false,
+			modifierTier: AttackTier.Standard,
+			isGrounded: true,
+			ownPosX: DefaultOwnX, ownPosZ: ownZ,
+			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+		);
+
+		/// <summary>Block held + forward movement with custom own position (for RoW displacement tests).</summary>
+		public static PlayerInput BlockWalkForwardInputAt(Fixed64 ownZ) => new(
+			moveX: Fixed64.Zero, moveZ: Fixed64.One,
+			runHeld: false,
+			attackJustPressed: false,
+			blockParryHeld: true, blockParryJustPressed: false,
+			dodgeJustPressed: false, jumpJustPressed: false,
+			modifierTier: AttackTier.Standard,
+			isGrounded: true,
+			ownPosX: DefaultOwnX, ownPosZ: ownZ,
+			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+		);
+
+		/// <summary>Movement away from opponent with custom own position (for retreat RoW tests).</summary>
+		public static PlayerInput MoveBackwardInputAt(Fixed64 ownZ) => new(
+			moveX: Fixed64.Zero, moveZ: -Fixed64.One,
+			runHeld: false,
+			attackJustPressed: false,
+			blockParryHeld: false, blockParryJustPressed: false,
+			dodgeJustPressed: false, jumpJustPressed: false,
+			modifierTier: AttackTier.Standard,
+			isGrounded: true,
+			ownPosX: DefaultOwnX, ownPosZ: ownZ,
+			opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ
+		);
+
 		/// <summary>Movement toward opponent (forward on Z).</summary>
 		public static PlayerInput MoveForwardInput(bool running = false) => new(
 			moveX: Fixed64.Zero, moveZ: Fixed64.One,

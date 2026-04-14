@@ -18,8 +18,9 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public float JumpCost = 1.0f;
 		[Export] public float ShatterCost = 3.0f;
 		[Export] public float BaseMomentumOnHit = 0.5f;
-		[Export] public float WalkMomentumRate = 0.05f;
-		[Export] public float RunMomentumRate = 0.1f;
+		[Export] public float RoWMomentumPerUnit = 0.375f;
+		[Export] public float RetreatDrainPerUnit = 0.1875f;
+		[Export] public float RoWMaxRange = 9f;
 		[Export] public float ClashMomentumSurge = 2.0f;
 		[Export] public float ComposureRecoveryRate = 0.0036f;
 		[Export] public int ComposureRecoveryCooldownFrames = 90;
@@ -55,7 +56,6 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public float BlockWalkSpeed = 2.0f;
 		[Export] public Node3D CameraPivot;
 		[Export] public int PlayerIndex = 0;
-		[Export] public float BoundaryPushbackStrength = 5.0f;
 
 		// ── Signals emitted to the Presentation Layer ───────────────────
 		[Signal] public delegate void HitLandedEventHandler();
@@ -79,13 +79,19 @@ namespace ResonanceOfSteel.Bridge
 		private string _modLight, _modHeavy, _modSuper;
 
 		// Converts integer KnockbackDistance from MoveData to world-space displacement.
-		private const float KnockbackScale = 0.1f;
+		private const float KnockbackDistScale = 0.25f;
+
+		// Duration in physics frames over which knockback is smoothly applied.
+		private const int KnockbackDurationFrames = 16;
 
 		// When true, _PhysicsProcess is a no-op; GameCoordinator drives the phases.
 		private bool _coordinatorDriven;
 
-		// Pending knockback velocity for smooth application over multiple frames.
-		private Vector3 _knockbackVelocity;
+		// Smooth knockback state — applied via ease-out curve over KnockbackDurationFrames.
+		private Vector3 _knockbackDir;
+		private float _knockbackTotalDist;
+		private int _knockbackFrame = KnockbackDurationFrames; // Start as "complete" (no active knockback)
+		private float _knockbackCoveredFrac;
 
 		public PlayerBridge Opponent { get; set; }
 		public IArchetypeData ArchetypeData { get; private set; }
@@ -242,7 +248,7 @@ namespace ResonanceOfSteel.Bridge
 
 		private void ApplyMovement(PlayerInput input, double delta)
 		{
-			bool knockbackActive = _knockbackVelocity.LengthSquared() > 1.0f;
+			bool knockbackActive = _knockbackFrame < KnockbackDurationFrames;
 
 			if (_sim.IsInDeathblow || _sim.IsStaggered)
 			{
@@ -274,15 +280,17 @@ namespace ResonanceOfSteel.Bridge
 				Velocity = Vector3.Zero;
 			}
 
-			// Blend in pending knockback velocity and decay it.
-			if (_knockbackVelocity.LengthSquared() > 0.01f)
+			// Smooth knockback: ease-out curve spreads displacement over KnockbackDurationFrames.
+			if (knockbackActive)
 			{
-				Velocity += _knockbackVelocity;
-				_knockbackVelocity *= 0.75f;
-			}
-			else
-			{
-				_knockbackVelocity = Vector3.Zero;
+				_knockbackFrame++;
+				float t = (float)_knockbackFrame / KnockbackDurationFrames;
+				// Ease-out: 1 - (1-t)^2 — fast at start, decelerating to stop.
+				float targetFrac = 1f - (1f - t) * (1f - t);
+				float frameDist = _knockbackTotalDist * (targetFrac - _knockbackCoveredFrac);
+				_knockbackCoveredFrac = targetFrac;
+				// Convert per-frame distance to velocity (MoveAndSlide uses units/second).
+				Velocity += _knockbackDir * frameDist * 60f;
 			}
 
 			MoveAndSlide();
@@ -295,8 +303,12 @@ namespace ResonanceOfSteel.Bridge
 				var collision = GetSlideCollision(i);
 				if (collision.GetCollider() is Node collider && collider.IsInGroup("boundary"))
 				{
-					Velocity += collision.GetNormal() * BoundaryPushbackStrength;
-					MoveAndSlide();
+					// Cancel velocity component into the wall. MoveAndSlide already
+					// resolved the collision — a second MoveAndSlide causes oscillation.
+					var normal = collision.GetNormal();
+					float dot = Velocity.Dot(normal);
+					if (dot < 0)
+						Velocity -= normal * dot;
 					break;
 				}
 			}
@@ -387,8 +399,11 @@ namespace ResonanceOfSteel.Bridge
 
 		public void ApplyKnockback(Vector3 direction, float distance)
 		{
-			// Convert displacement to velocity impulse. Decays over several frames in ApplyMovement.
-			_knockbackVelocity += direction * distance * KnockbackScale * 60f;
+			// Smooth knockback: store target displacement, applied over KnockbackDurationFrames via ease-out.
+			_knockbackDir = direction;
+			_knockbackTotalDist = distance * KnockbackDistScale;
+			_knockbackFrame = 0;
+			_knockbackCoveredFrac = 0f;
 		}
 
 		// ── Reset (called between rounds) ───────────────────────────────
@@ -398,7 +413,8 @@ namespace ResonanceOfSteel.Bridge
 			_sim.ResetState();
 			GlobalPosition = spawnPosition;
 			Velocity = Vector3.Zero;
-			_knockbackVelocity = Vector3.Zero;
+			_knockbackFrame = KnockbackDurationFrames; // Mark knockback as complete
+			_knockbackCoveredFrac = 1f;
 			_wasFatigued = false;
 		}
 
@@ -410,8 +426,9 @@ namespace ResonanceOfSteel.Bridge
 			JumpCost: (Fixed64)(double)JumpCost,
 			ShatterCost: (Fixed64)(double)ShatterCost,
 			BaseMomentumOnHit: (Fixed64)(double)BaseMomentumOnHit,
-			WalkMomentumRate: (Fixed64)(double)WalkMomentumRate,
-			RunMomentumRate: (Fixed64)(double)RunMomentumRate,
+			RoWMomentumPerUnit: (Fixed64)(double)RoWMomentumPerUnit,
+			RetreatDrainPerUnit: (Fixed64)(double)RetreatDrainPerUnit,
+			RoWMaxRangeSquared: (Fixed64)(double)(RoWMaxRange * RoWMaxRange),
 			ClashMomentumSurge: (Fixed64)(double)ClashMomentumSurge,
 			ComposureBaseRecoveryRate: (Fixed64)(double)ComposureRecoveryRate,
 			ComposureRecoveryCooldownFrames: ComposureRecoveryCooldownFrames,

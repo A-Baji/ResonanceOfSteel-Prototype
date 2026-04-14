@@ -128,14 +128,24 @@ Three resources govern combat. All values are `Fixed64`.
 | Jump | 1.0 segments |
 | Shatter Modifier | 3.0 segments |
 
-**Generation:**
+**Generation (Right-of-Way / Displacement-Based):**
+
+RoW momentum gain is proportional to actual displacement toward the opponent — not input direction. This means pressing toward an opponent while physically blocked (by a wall or the opponent's body) generates zero momentum. Walking, running, and block-walking all generate the same momentum per unit of distance traveled.
 
 | Source | Rate |
 |--------|------|
 | Landing any strike (hit or blocked) | `base_momentum_on_hit` = 0.5 |
-| Walking toward opponent | `walk_momentum_rate` = 0.05/frame |
-| Running toward opponent | `run_momentum_rate` = 0.1/frame |
+| Moving toward opponent | `RoWMomentumPerUnit` = 0.375 per unit distance |
 | Clash (same-tier simultaneous hit) | `clash_momentum_surge` = 2.0 |
+
+**Effective per-frame rates** (for reference — these emerge from displacement × RoWMomentumPerUnit):
+- Walk (4.0 u/s): ~0.025/frame
+- Run (7.0 u/s): ~0.044/frame
+- Block-walk (2.0 u/s): ~0.013/frame
+
+**Retreat Drain:** Moving away from the opponent drains momentum at `RetreatDrainPerUnit` = 0.1875 per unit distance.
+
+**Range Limit:** RoW only applies within `RoWMaxRange` = 9.0 units of the opponent (squared check: `RoWMaxRangeSquared` = 81.0). Beyond this range, neither gain nor drain occurs.
 
 **Fatigue Cascade** (Momentum = 0.0):
 - Lose ability to Perfect Parry (gated by `CanAfford(PerfectParryCost)`)
@@ -264,7 +274,7 @@ Tier 0 damage is **conditional** on block state:
 - Universal fallback — **always available**, including during Fatigue
 - Causes Composure buildup on the blocker
 - **Chip damage**: Blocked T1–T3 attacks deal 20% Vitality damage (`ChipDamageMultiplier` = 0.2). T0 blocked attacks deal Composure only, no Vitality chip.
-- **Knockback**: Blocked T1+ attacks push the blocker backward based on the move's `KnockbackDistance`. Knockback suppresses input movement until velocity decays.
+- **Knockback**: Blocked T1+ attacks push the blocker backward based on the move's `KnockbackDistance`. Knockback is applied via a smooth ease-out curve over 16 frames (`KnockbackDurationFrames`) to prevent teleport-like impulses. Knockback suppresses input movement for its duration.
 - Attacker suffers no Composure penalty
 - Blocking T2 (Heavy) causes Weapon Recoil (resets neutral spacing)
 - **No effect on Shatter-modified strikes** — block occurs normally, Shatter whiffs
@@ -510,6 +520,7 @@ Per tick during Bridge `_PhysicsProcess` (two-pass via `GameCoordinator`):
 | Round end: Timeout | Higher Vitality wins, loser loses 1 life |
 | On life loss | Full reset: positions, Vitality, Composure, Momentum, stacks all reset to initial values |
 | Match end | One player reaches 0 lives |
+| Victory overlay | `MainCoordinator` shows "Player X Wins!" label, pauses game tree, ESC to quit |
 
 ---
 
@@ -563,7 +574,9 @@ These variables are exposed in the Bridge Layer (Inspector-editable via `[Export
 - `JumpCost` (1.0)
 - `ShatterCost` (3.0)
 - `BaseMomentumOnHit` (0.5)
-- `WalkMomentumRate` (0.05/frame) / `RunMomentumRate` (0.1/frame)
+- `RoWMomentumPerUnit` (0.375 per unit distance)
+- `RetreatDrainPerUnit` (0.1875 per unit distance)
+- `RoWMaxRange` (9.0 — squared to 81.0 at runtime)
 - `ClashMomentumSurge` (2.0)
 - `ComposureRecoveryRate` (0.0036/frame)
 - `ComposureRecoveryCooldownFrames` (90)
@@ -589,7 +602,6 @@ These variables are exposed in the Bridge Layer (Inspector-editable via `[Export
 **Setup:**
 - `Archetype` (Longsword / Greatsword)
 - `WalkSpeed` (4.0) / `RunSpeed` (7.0)
-- `BoundaryPushbackStrength` (5.0)
 - `CameraPivot`, `ActiveHitboxManager`, `PlayerIndex`
 
 ---

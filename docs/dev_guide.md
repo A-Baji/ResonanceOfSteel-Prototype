@@ -61,7 +61,7 @@ The central class. Owns all combat state for one player. Updated exactly once pe
 3. Track Shatter window (block press recency)
 4. Composure recovery tick
 5. Frame Advantage Stack decay tick
-6. Right-of-Way Momentum generation (if moving toward opponent within 60° cone, in Idle/Moving/Blocking)
+6. Right-of-Way Momentum generation (displacement-based: actual position delta projected onto opponent direction, in Idle/Moving/Blocking, within RoWMaxRange)
 7. Enqueue new inputs into buffer
 8. Consume highest-priority buffered input (only in Idle/Moving — inputs stay in buffer during action-locked states)
 9. Age buffer entries (decrement TTLs, remove expired)
@@ -168,7 +168,7 @@ Godot-aware conduit. Translates between engine and simulation. All classes are `
 
 **Two-pass execution:** `_PhysicsProcess` is disabled when `SetCoordinatorDriven()` is called. Instead, `GameCoordinator` drives `TickPhase(delta)` (input/simulation/movement) and `ResolvePhase()` (hitbox queries/combat events) as separate calls, ensuring both players tick before any resolution.
 
-**Knockback:** Uses a `_knockbackVelocity` field that decays at 0.75× per frame, blended into `Velocity` during `ApplyMovement`. Produces smooth pushback over multiple frames instead of instant teleport. While knockback velocity is significant (> 1.0 m/s), input movement is suppressed to prevent players from walking through pushback.
+**Knockback:** Uses a smooth ease-out curve applied over `KnockbackDurationFrames` (16 frames). Total displacement = `KnockbackDistance × KnockbackDistScale (0.15)`. Each frame's contribution follows `1 - (1-t)²` easing. Input movement is suppressed during active knockback.
 
 **Movement priority in `ApplyMovement`:**
 1. Deathblow/Staggered → complete halt (velocity zeroed)
@@ -177,7 +177,7 @@ Godot-aware conduit. Translates between engine and simulation. All classes are `
 4. Normal input → direction × walk/run speed
 5. No input → stop
 
-Knockback velocity is overlaid on top of all branches and decays independently.
+Knockback velocity from the ease-out curve is added to the velocity each frame during the knockback duration.
 
 **Action name caching:** Input action strings (e.g., `"attack"`, `"attack_p2"`) are built once via `CacheActionNames()`, deferred to the first `_PhysicsProcess` call to avoid race conditions with `PlayerIndex` assignment.
 
@@ -201,6 +201,8 @@ Knockback velocity is overlaid on top of all branches and decays independently.
 **Physics query:** Uses cached `PhysicsShapeQueryParameters3D` instance (lazy-initialized alongside the `Exclude` RID list) to avoid per-frame heap allocation. `Shape` and `Transform` are updated each frame; `CollisionMask`, `CollideWithAreas`, `CollideWithBodies`, and `Exclude` are set once. `HurtboxLayer = 4` as collision mask. Shape comes from `IArchetypeVisuals.GetHitboxShape()`.
 
 **Single-hit guard:** `_hitRegisteredThisSwing` prevents multiple hits per swing phase. Reset when hitbox deactivates.
+
+**Clash double-hit guard:** `ProcessHitboxes()` checks `OwnerBridge.IsClashedThisFrame()` before resolution. If the opponent's HitboxManager already detected a Clash (setting both players' `ClashedThisFrame`), this player's resolution is skipped entirely to prevent the second pass from treating it as a normal hit.
 
 ### RoundManager.cs — Match Flow
 
@@ -262,9 +264,9 @@ This prevents tick-order asymmetry in clash detection. Each PlayerBridge has `Se
 
 **P2 input registration:** Uses `InputMap.AddAction()` + `InputEventKey` with `PhysicalKeycode` to create P2-suffixed actions at runtime. Checks `InputMap.HasAction()` to avoid re-registration.
 
-### MainCoordinator.cs — Split-Screen Setup
+### MainCoordinator.cs — Split-Screen Setup & Victory Screen
 
-Wires `RemoteTransform3D` → Camera nodes across the scene tree, and assigns `CameraController` targets (owner/opponent characters).
+Wires `RemoteTransform3D` → Camera nodes across the scene tree, and assigns `CameraController` targets (owner/opponent characters). Listens for `RoundManager.MatchEnded` signal → shows a "Player X Wins!" label overlay, pauses the game tree, and allows ESC to quit.
 
 ### CameraController.cs — Split-Screen Camera
 
@@ -291,11 +293,11 @@ GameCoordinator._PhysicsProcess(delta)
       │       │       │       ├── InputBuffer.Add/Consume/Tick
       │       │       │       ├── ComposureRecovery (cooldown + V² scaling)
       │       │       │       ├── StackDecay tick
-      │       │       │       ├── RoW Momentum (60° cone check)
+      │       │       │       ├── RoW Momentum (displacement-based, range-limited)
       │       │       │       └── ProcessState() → state transition
-      │       │       ├── ApplyMovement()        → MoveAndSlide() + knockback decay
+      │       │       ├── ApplyMovement()        → MoveAndSlide() + smooth knockback curve
       │       │       ├── FaceOpponent()          → Yaw snap
-      │       │       └── ApplyBoundaryPushback()
+      │       │       └── ApplyBoundaryPushback() → cancel velocity into wall
       │       │
       │       └── Player2.TickPhase(delta)  (same as above)
       │
@@ -445,19 +447,19 @@ GdUnit4 v4.4.1 via NuGet (`gdUnit4.api`). Tests live in `tests/` and cover the s
 | File | Tests | Coverage Area |
 |------|-------|---------------|
 | `InputBufferTests.cs` | 12 | TTL queue, priority order, expiry, duplicates |
-| `EconomyHandlerTests.cs` | 39 | Momentum, Vitality, Composure, stacks, fatigue, recovery, edge cases |
-| `PlayerSimulationStateTests.cs` | 56 | State transitions, action lock, buffer preservation, RoW, penalty system |
+| `EconomyHandlerTests.cs` | 41 | Momentum, Vitality, Composure, stacks, fatigue, recovery, RoW displacement, retreat drain |
+| `PlayerSimulationStateTests.cs` | 59 | State transitions, action lock, buffer preservation, RoW displacement/range/retreat, penalty system |
 | `AttackSystemTests.cs` | 56 | Coil→Swing→Recovery, frame data, armor, chip damage, stagger, interrupts |
 | `EvasionSystemTests.cs` | 34 | Dodge/Jump 3-phase, fatigue degradation, direction restriction |
 | `ShatterClashDeathblowTests.cs` | 46 | Shatter window/cost/whiff, Clash, Deathblow, penalty interactions |
 | `CombatResolverTests.cs` | 35 | All 8 HitOutcome paths, resolution priority, knockback |
 | `ArchetypeDataTests.cs` | 56 | Frame data, multipliers, cross-archetype invariants, constants |
 | `BridgeIntegrationTests.cs` | 22 | Scene wiring, input flow, signals, RoundManager, fatigue edge detection |
-| **Total** | **356** (334 headless + 22 Godot-runtime) | |
+| **Total** | **361** (339 headless + 22 Godot-runtime) | |
 
 ### Running Tests
 
-- **`dotnet test`** runs 334 tests (all suites except `BridgeIntegrationTests`). The 22 `[RequireGodotRuntime]` tests are excluded when no Godot process is available, producing the "Failed to connect: Connection timeout" message — this is expected, not an error.
+- **`dotnet test`** runs 339 tests (all suites except `BridgeIntegrationTests`). The 22 `[RequireGodotRuntime]` tests are excluded when no Godot process is available, producing the "Failed to connect: Connection timeout" message — this is expected, not an error.
 - **Godot editor** (GdUnit4 plugin) runs all 356 tests including bridge integration.
 
 To run bridge tests from the command line, set `GODOT_BIN` to the Godot executable path before calling `dotnet test`.
@@ -582,6 +584,7 @@ Check off when the corresponding test passes (run via GdUnit4).
 - [ ] Both players receive `ClashMomentumSurge` (2.0)
 - [ ] Both players enter Recovery (`ClashRecoveryFrames` = 8)
 - [ ] `ClashedThisFrame` guard prevents double-processing
+- [ ] Second player's HitboxManager skips resolution when `ClashedThisFrame` is set (no damage on clash)
 - [ ] `OnClash` forces Recovery from any state (Idle, Blocking, Swing, etc.)
 
 #### Stagger Hierarchy
@@ -595,9 +598,11 @@ Check off when the corresponding test passes (run via GdUnit4).
 
 #### Momentum Economy
 - [ ] Starts at 4.0 (half of max 8.0)
-- [ ] Walking toward opponent (+0.05/frame, 60° cone) generates momentum
-- [ ] Running toward opponent (+0.1/frame) generates more than walking
-- [ ] RoW does not generate while action-locked or moving perpendicular/away
+- [ ] RoW displacement-based: momentum proportional to actual distance moved toward opponent
+- [ ] Larger displacement generates more momentum (run > walk per frame)
+- [ ] No displacement = no RoW (blocked by wall/opponent)
+- [ ] Retreat drains momentum at `RetreatDrainPerUnit` (0.1875)
+- [ ] RoW inactive beyond `RoWMaxRange` (9 units, squared = 81)
 - [ ] `IsMovingToward` returns false when opponent is at the same position
 - [ ] `BaseMomentumOnHit` (0.5) added on every landed or blocked hit
 - [ ] ClashSurge (2.0) applied on clash
@@ -638,11 +643,15 @@ Check off when the corresponding test passes (run via GdUnit4).
 - [ ] Attack pressed during Blocking is buffered and fires after block released
 - [ ] `block_parry` pressed late in Recovery is buffered and fires as Parrying after Idle
 
-#### Right-of-Way (RoW)
+#### Right-of-Way (RoW) — Displacement-Based
 - [ ] RoW generated in Idle, Moving, and Blocking states only
 - [ ] No RoW during action-locked states
 - [ ] Perpendicular movement does not generate RoW
-- [ ] Moving away does not generate RoW
+- [ ] No displacement (blocked by wall/opponent) = no RoW even when pressing forward
+- [ ] Larger displacement generates more momentum (run > walk > block-walk)
+- [ ] Retreat (moving away from opponent) drains momentum
+- [ ] RoW not generated beyond RoWMaxRange (9 units / 81 squared)
+- [ ] Retreat drain cannot reduce momentum below 0
 
 #### Input Modifier Tier Selection
 - [ ] No modifier held → Standard (T1)
@@ -682,7 +691,7 @@ Verify by running the project. These behaviors involve physics integration, visu
 - [x] Block knockback: defender is pushed back a noticeable distance on T1-T3 hits
 - [x] Stagger knockback (20% of block): shorter push, clearly less than blocking
 - [x] Clash knockback: both players pushed apart symmetrically
-- [ ] Knockback velocity decays smoothly over multiple frames (0.75× per frame)
+- [x] Knockback follows smooth ease-out curve over 16 frames (no teleport on first frame)
 - [x] While knockback is active, player cannot walk through it (movement suppressed)
 - [x] T0 attacks produce no knockback on block
 - [x] Knockback from T2 (weapon recoil) feels more disruptive than T1
@@ -696,8 +705,9 @@ Verify by running the project. These behaviors involve physics integration, visu
 - [x] Both players can act simultaneously with no cross-interference
 
 #### Boundary Pushback
-- [x] Invisible walls push players back at `BoundaryPushbackStrength` (5.0)
-- [x] Pushback is not exploitable for locking an opponent against a wall (force feels appropriate)
+- [x] Invisible walls stop player movement cleanly (velocity into wall cancelled)
+- [x] No jitter or bouncing when pressing into boundary walls
+- [x] Pushback is not exploitable for locking an opponent against a wall
 
 #### HUD & Presentation
 - [x] Vitality bar depletes smoothly; tween (0.25s, Quad out) tracks damage without snapping
@@ -717,15 +727,24 @@ Verify by running the project. These behaviors involve physics integration, visu
 - [ ] `DeathblowTriggered` execution is clearly communicated
 
 #### Camera & Split-Screen
-- [ ] Both viewports occupy 50% of screen with no overlap or gap
+- [x] Both viewports occupy 50% of screen with no gap (HBoxContainer separation = 0)
 - [x] Each camera tracks behind/above its owning player
 - [x] Yaw + pitch interpolation toward opponent feels responsive without snapping
 - [x] `SpringArm3D` prevents camera clipping through stage geometry
 - [x] Camera height increases slightly as opponent approaches (closer = higher angle)
 - [x] `TopLevel = true` — camera does not inherit player's rotation
 
+
 #### Momentum Visibility (§4.1 Design Intent)
 - [ ] Momentum gauge is visible only in the owning player's viewport; opponent's viewport shows no gauge (or a blank/hidden gauge per `momentum_ui_visibility` setting)
+
+#### RoW Feel (Displacement-Based)
+- [x] Walking toward opponent generates momentum; running generates more per second
+- [x] Pressing toward opponent while physically blocked by them generates zero momentum
+- [x] Pressing toward opponent while physically blocked by a wall generates zero momentum
+- [x] Retreating visibly drains momentum (watch gauge)
+- [x] At large distances (beyond ~9 units), advancing generates no momentum
+- [x] Block-walking generates momentum at a slower rate than normal walk
 
 #### Debug Overlay
 - [x] F3 toggles debug HUD; starts hidden at launch
@@ -743,7 +762,8 @@ Verify by running the project. These behaviors involve physics integration, visu
 - [x] Exact vitality tie: no life lost, new round starts (verify with equal damage taken)
 - [x] 2-second delay between rounds feels appropriately paced
 - [x] Full reset between rounds: positions, all economy values, states restored
-- [ ] Match ends correctly when one player reaches 0 lives; winner displayed
+- [x] Match ends correctly when one player reaches 0 lives; "Player X Wins!" overlay shown, game paused
+- [ ] ESC quits the game from the victory overlay
 
 #### Two-Pass Architecture (Fallback)
 - [ ] Standalone `PlayerBridge._PhysicsProcess` (without `GameCoordinator`) still runs correctly for solo testing scenes

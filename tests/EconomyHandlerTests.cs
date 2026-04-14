@@ -69,26 +69,47 @@ namespace ResonanceOfSteel.Tests
 		// ── Momentum generation ────────────────────────────────────────
 
 		[TestCase]
-		public void Walk_RoW_Generates_Momentum()
+		public void RoW_Displacement_Generates_Momentum()
 		{
 			_eco.SpendMomentum((Fixed64)4.0); // start at 0
-			_eco.AddRightOfWayMomentum(isRunning: false);
-			AssertThat((double)_eco.Momentum).IsEqualApprox(0.05, 0.001);
+			_eco.AddRightOfWayMomentum((Fixed64)0.1); // 0.1 units toward opponent
+			var expected = 0.375 * 0.1; // RoWMomentumPerUnit * displacement
+			AssertThat((double)_eco.Momentum).IsEqualApprox(expected, 0.001);
 		}
 
 		[TestCase]
-		public void Run_RoW_Generates_More_Momentum()
+		public void RoW_Larger_Displacement_Generates_More()
 		{
 			_eco.SpendMomentum((Fixed64)4.0);
-			_eco.AddRightOfWayMomentum(isRunning: true);
-			AssertThat((double)_eco.Momentum).IsEqualApprox(0.1, 0.001);
+			_eco.AddRightOfWayMomentum((Fixed64)0.2);
+			var expected = 0.375 * 0.2;
+			AssertThat((double)_eco.Momentum).IsEqualApprox(expected, 0.001);
+		}
+
+		[TestCase]
+		public void Retreat_Drains_Momentum()
+		{
+			// Start at 4.0 (default)
+			double before = (double)_eco.Momentum;
+			_eco.DrainRetreatMomentum((Fixed64)0.1);
+			double after = (double)_eco.Momentum;
+			double expectedDrain = 0.1875 * 0.1;
+			AssertThat(after).IsEqualApprox(before - expectedDrain, 0.001);
+		}
+
+		[TestCase]
+		public void Retreat_Drain_Cannot_Go_Below_Zero()
+		{
+			_eco.SpendMomentum((Fixed64)4.0); // at 0
+			_eco.DrainRetreatMomentum((Fixed64)1.0);
+			AssertThat((double)_eco.Momentum).IsEqual(0.0);
 		}
 
 		[TestCase]
 		public void Momentum_Capped_At_Max()
 		{
 			for (int i = 0; i < 1000; i++)
-				_eco.AddRightOfWayMomentum(isRunning: true);
+				_eco.AddRightOfWayMomentum((Fixed64)1.0);
 			AssertThat((double)_eco.Momentum).IsEqual(8.0);
 		}
 

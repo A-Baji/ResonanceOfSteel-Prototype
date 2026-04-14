@@ -143,7 +143,7 @@ namespace ResonanceOfSteel.Tests
 			// We do NOT assert intermediate state here. GdUnit4 re-injects
 			// block_parry as JustPressed on every physics frame inside
 			// SimulateFrames, causing the player to cycle:
-			// Idle → Parrying(window) → Blocking (1 frame) → repeat
+			//   Idle → Parrying(window) → Blocking (1 frame) → repeat
 			// with accumulating penalties. During Parrying the player is
 			// action-locked (slide-to-stop, speed→0). During Blocking the
 			// player is capped at BlockWalkSpeed (2.0). In both cases,

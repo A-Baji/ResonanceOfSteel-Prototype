@@ -28,6 +28,10 @@ namespace ResonanceOfSteel.Simulation
 		public Fixed64 PosX { get; private set; }
 		public Fixed64 PosZ { get; private set; }
 
+		// Previous-frame position for computing actual displacement (RoW).
+		private Fixed64 _prevPosX, _prevPosZ;
+		private bool _posInitialized;
+
 		// ── Per-tick outputs (consumed by Bridge after Tick) ────────────
 		public CombatEvent LastEvent { get; private set; }
 		public bool HitboxActive { get; private set; }
@@ -140,6 +144,14 @@ namespace ResonanceOfSteel.Simulation
 			PosX = input.OwnPosX;
 			PosZ = input.OwnPosZ;
 
+			// Initialize previous position on first tick to avoid bogus displacement.
+			if (!_posInitialized)
+			{
+				_prevPosX = input.OwnPosX;
+				_prevPosZ = input.OwnPosZ;
+				_posInitialized = true;
+			}
+
 			// Track block press recency for Shatter window detection.
 			if (input.BlockParryJustPressed)
 				_blockPressedFramesAgo = 0;
@@ -157,9 +169,37 @@ namespace ResonanceOfSteel.Simulation
 			// Frame Advantage Stack gradual decay.
 			Economy.TickStackDecay();
 
-			// Right-of-Way Momentum generation.
-			if (IsMovingToward(input) && (_state is Idle || _state is Moving || _state is Blocking))
-				Economy.AddRightOfWayMomentum(input.RunHeld);
+			// Right-of-Way Momentum: displacement-based with range limit.
+			if (_state is Idle || _state is Moving || _state is Blocking)
+			{
+				var dispX = input.OwnPosX - _prevPosX;
+				var dispZ = input.OwnPosZ - _prevPosZ;
+				var dispSq = dispX * dispX + dispZ * dispZ;
+
+				if (dispSq > Fixed64.Zero)
+				{
+					var toOppX = input.OpponentPosX - input.OwnPosX;
+					var toOppZ = input.OpponentPosZ - input.OwnPosZ;
+					var distSq = toOppX * toOppX + toOppZ * toOppZ;
+
+					if (distSq > Fixed64.Zero && distSq <= _constants.RoWMaxRangeSquared)
+					{
+						// Project displacement onto opponent direction.
+						var dot = dispX * toOppX + dispZ * toOppZ;
+						var dist = FixedMath.Sqrt(distSq);
+						var towardDisp = dot / dist; // positive = toward, negative = away
+
+						if (towardDisp > Fixed64.Zero)
+							Economy.AddRightOfWayMomentum(towardDisp);
+						else if (towardDisp < Fixed64.Zero)
+							Economy.DrainRetreatMomentum(-towardDisp);
+					}
+				}
+			}
+
+			// Update previous position for next frame's displacement calculation.
+			_prevPosX = input.OwnPosX;
+			_prevPosZ = input.OwnPosZ;
 
 			// Buffer management: enqueue new presses, consume only in actionable states, then age.
 			EnqueueInputs(input);
@@ -219,7 +259,7 @@ namespace ResonanceOfSteel.Simulation
 		/// Shared logic for states that accept all input (Idle, Moving).
 		/// Returns a new state if an action was consumed, or null to remain in current state.
 		/// </summary>
-		private object? ProcessActionableInput(PlayerInput input, PlayerInputAction consumed)
+		private object ProcessActionableInput(PlayerInput input, PlayerInputAction consumed)
 		{
 			switch (consumed)
 			{
@@ -249,16 +289,16 @@ namespace ResonanceOfSteel.Simulation
 					return null;
 
 				case PlayerInputAction.Jump:
-				{
-					bool canAffordJump = Economy.CanAfford(_constants.JumpCost);
-					if (canAffordJump) Economy.SpendMomentum(_constants.JumpCost);
-					int startupPenalty = canAffordJump ? 0 : _constants.EvasionFatigueStartupPenalty;
-					int activeReduction = canAffordJump ? 0 : _constants.EvasionFatigueActiveReduction;
-					return new Jumping(
-						_constants.JumpStartupFrames + startupPenalty,
-						Math.Max(1, _constants.JumpActiveFrames - activeReduction),
-						_constants.JumpRecoveryFrames);
-				}
+					{
+						bool canAffordJump = Economy.CanAfford(_constants.JumpCost);
+						if (canAffordJump) Economy.SpendMomentum(_constants.JumpCost);
+						int startupPenalty = canAffordJump ? 0 : _constants.EvasionFatigueStartupPenalty;
+						int activeReduction = canAffordJump ? 0 : _constants.EvasionFatigueActiveReduction;
+						return new Jumping(
+							_constants.JumpStartupFrames + startupPenalty,
+							Math.Max(1, _constants.JumpActiveFrames - activeReduction),
+							_constants.JumpRecoveryFrames);
+					}
 
 				default:
 					if (input.BlockParryHeld)
@@ -483,6 +523,7 @@ namespace ResonanceOfSteel.Simulation
 			_shatterWhiffRecoveryPending = false;
 			_prematureBlockPenalties = 0;
 			_parrySucceededThisAttempt = false;
+			_posInitialized = false;
 			_buffer.Clear();
 		}
 	}

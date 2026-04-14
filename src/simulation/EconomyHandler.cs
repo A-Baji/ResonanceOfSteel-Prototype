@@ -32,12 +32,19 @@ namespace ResonanceOfSteel.Simulation
 
 		// ── Momentum ──────────────────────────────────────────────────
 
-		// Called each frame when the character is moving toward the opponent.
-		// isRunning determines whether to use walk or run rate (Brief Section 6.1).
-		public void AddRightOfWayMomentum(bool isRunning)
+		// Called each frame with the signed displacement component toward the opponent.
+		// Positive = moving toward (gain momentum). Negative should use DrainRetreatMomentum.
+		public void AddRightOfWayMomentum(Fixed64 displacementToward)
 		{
-			var rate = isRunning ? _c.RunMomentumRate : _c.WalkMomentumRate;
-			Momentum = FixedMath.Min(Momentum + rate, _c.MomentumMax);
+			var gain = _c.RoWMomentumPerUnit * displacementToward;
+			Momentum = FixedMath.Min(Momentum + gain, _c.MomentumMax);
+		}
+
+		// Called each frame when moving away from opponent. Drains momentum.
+		public void DrainRetreatMomentum(Fixed64 displacementAway)
+		{
+			var drain = _c.RetreatDrainPerUnit * displacementAway;
+			Momentum = FixedMath.Max(Momentum - drain, Fixed64.Zero);
 		}
 
 		// Called when any strike lands or is blocked.
