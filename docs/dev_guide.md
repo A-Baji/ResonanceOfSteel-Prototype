@@ -63,13 +63,13 @@ The central class. Owns all combat state for one player. Updated exactly once pe
 5. Frame Advantage Stack decay tick
 6. Right-of-Way Momentum generation (displacement-based: actual position delta projected onto opponent direction, in Idle/Moving/Blocking, within RoWMaxRange)
 7. Enqueue new inputs into buffer
-8. Consume highest-priority buffered input (only in Idle/Moving — inputs stay in buffer during action-locked states)
+8. Consume highest-priority buffered input (only in Idle/Moving and `ExternalActionLock` is false — inputs stay in buffer during action-locked states or knockback)
 9. Age buffer entries (decrement TTLs, remove expired)
 10. Dispatch to state-specific processor
 
 **Actionable states:** `Idle` and `Moving` share `ProcessActionableInput()` which handles all input types (block/attack/dodge/jump/held-block). This prevents input drops by checking actions before movement fallback.
 
-**Action commitment:** All states except Idle, Moving, and Blocking are action-locked. During locked states, the input buffer does NOT consume entries — inputs remain buffered and expire via TTL. This means early inputs pressed near the end of an animation are preserved and consumed when the player returns to an actionable state. Recovery no longer accepts block-cancel.
+**Action commitment:** All states except Idle, Moving, and Blocking are action-locked. The Bridge can also set `ExternalActionLock` for bridge-owned conditions (e.g. knockback) without adding a simulation state. During locked states or external lock, the input buffer does NOT consume entries — inputs remain buffered and expire via TTL. This means early inputs pressed near the end of an animation or knockback are preserved and consumed when the player returns to an actionable state. Recovery no longer accepts block-cancel.
 
 ### PlayerStates.cs — State Records
 
@@ -168,12 +168,12 @@ Godot-aware conduit. Translates between engine and simulation. All classes are `
 
 **Two-pass execution:** `_PhysicsProcess` is disabled when `SetCoordinatorDriven()` is called. Instead, `GameCoordinator` drives `TickPhase(delta)` (input/simulation/movement) and `ResolvePhase()` (hitbox queries/combat events) as separate calls, ensuring both players tick before any resolution.
 
-**Knockback:** Uses a smooth ease-out curve applied over `KnockbackDurationFrames` (16 frames). Total displacement = `KnockbackDistance × KnockbackDistScale (0.15)`. Each frame's contribution follows `1 - (1-t)²` easing. Input movement is suppressed during active knockback.
+**Knockback:** Uses a smooth ease-out curve applied over the move's `StaggerFrames` (the single source of truth for impact severity). Total displacement = `KnockbackDistance × KnockbackDistScale (0.25)`. Each frame's contribution follows `1 - (1-t)²` easing. During knockback, the Bridge sets `ExternalActionLock` on the simulation — inputs are still buffered but not consumed, and no new actions can be initiated until knockback completes. Heavier attacks produce longer knockback lockout (e.g., Longsword T1 = 12 frames, T3 = 25 frames). Phase 2: replace with simulation-owned `KnockbackFramesLeft` via `ApplyCombatResult`.
 
 **Movement priority in `ApplyMovement`:**
 1. Deathblow/Staggered → complete halt (velocity zeroed)
-2. Action-locked (Coil/Swing/Recovery/Parrying/Dodging/Jumping) → slide-to-stop at 0.85× friction per frame
-3. Active knockback (non-locked state, e.g. blocking) → suppress input movement
+2. Active knockback → zero base velocity (knockback curve added after)
+3. Action-locked (Coil/Swing/Recovery/Parrying/Dodging/Jumping) → slide-to-stop at 0.85× friction per frame
 4. Normal input → direction × walk/run speed
 5. No input → stop
 
@@ -423,6 +423,12 @@ Remaining work:
 **Resolution strategy:** Replace the 8 public mutation methods with a single `ApplyCombatResult(CombatResult result)` method. `HitboxManager` builds a serializable `CombatResult` struct from the physics query, then the simulation processes it deterministically. The full frame contract becomes: `Tick(input)` → Bridge does physics → `ApplyCombatResult(result)`. For rollback, store both `PlayerInput` + `CombatResult` per frame.
 
 **Why deferred:** This refactor touches `PlayerSimulation` (~8 methods → 1), `HitboxManager` (resolution logic must build structs instead of calling methods), and `PlayerBridge` (passthrough API). `TryInitiateShatter` is currently a query-with-side-effects (returns bool, spends Momentum) that `HitboxManager` uses to branch resolution — some resolution logic would need to move into the simulation. This overlaps heavily with the LogicBlocks migration and MemoryPack serialization work. All three should be coordinated in Phase 2.
+
+### Knockback Internalization
+
+**Current state:** Knockback is bridge-owned. `PlayerBridge` tracks knockback state (`_knockbackFrame`, `_knockbackDuration`, etc.) and sets `ExternalActionLock` on the simulation before each `Tick()` to suppress input consumption during knockback. This creates a bridge→simulation write dependency.
+
+**Phase 2 migration:** Replace `ExternalActionLock` with a simulation-owned `KnockbackFramesLeft` counter. Knockback becomes part of `ApplyCombatResult` — the simulation receives knockback duration from the combat result, tracks the countdown internally, and reports it as action-locked. The bridge reads the counter for visual curve application. This eliminates the bidirectional dependency and makes knockback state serializable for rollback.
 
 ### Tick-Order Asymmetry — RESOLVED
 
@@ -691,7 +697,7 @@ Verify by running the project. These behaviors involve physics integration, visu
 - [x] Block knockback: defender is pushed back a noticeable distance on T1-T3 hits
 - [x] Stagger knockback (20% of block): shorter push, clearly less than blocking
 - [x] Clash knockback: both players pushed apart symmetrically
-- [x] Knockback follows smooth ease-out curve over 16 frames (no teleport on first frame)
+- [x] Knockback follows smooth ease-out curve over StaggerFrames duration (no teleport on first frame)
 - [x] While knockback is active, player cannot walk through it (movement suppressed)
 - [x] T0 attacks produce no knockback on block
 - [x] Knockback from T2 (weapon recoil) feels more disruptive than T1

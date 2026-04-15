@@ -11,6 +11,9 @@ namespace ResonanceOfSteel.Scene
 
 		public override void _Ready()
 		{
+			// Allow this node to receive input even when the tree is paused (victory screen).
+			ProcessMode = ProcessModeEnum.Always;
+
 			var vp1 = GetNode<SubViewport>("HBoxContainer/SubViewportContainer/ViewportP1");
 			var vp2 = GetNode<SubViewportContainer>("HBoxContainer/SubViewportContainer2")
 							.GetNode<SubViewport>("ViewportP2");

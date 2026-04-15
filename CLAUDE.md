@@ -143,9 +143,9 @@ RoW momentum gain is proportional to actual displacement toward the opponent —
 - Run (7.0 u/s): ~0.044/frame
 - Block-walk (2.0 u/s): ~0.013/frame
 
-**Retreat Drain:** Moving away from the opponent drains momentum at `RetreatDrainPerUnit` = 0.1875 per unit distance.
+**Retreat Drain:** Moving away from the opponent drains momentum at `RetreatDrainPerUnit` = 0.1875 per unit distance. Retreat drain is **not range-limited** — retreating always costs momentum regardless of distance.
 
-**Range Limit:** RoW only applies within `RoWMaxRange` = 9.0 units of the opponent (squared check: `RoWMaxRangeSquared` = 81.0). Beyond this range, neither gain nor drain occurs.
+**Range Limit:** RoW *gain* only applies within `RoWMaxRange` = 9.0 units of the opponent (squared check: `RoWMaxRangeSquared` = 81.0). Beyond this range, advancing generates no momentum, but retreat drain still applies.
 
 **Fatigue Cascade** (Momentum = 0.0):
 - Lose ability to Perfect Parry (gated by `CanAfford(PerfectParryCost)`)
@@ -232,9 +232,9 @@ record Deathblow;
 
 ### 5.3 Action Commitment
 
-All states except Idle, Moving, and Blocking are **action-locked**: the player is fully committed and cannot cancel into other actions. This enforces the "commitment and consequence" design philosophy.
+All states except Idle, Moving, and Blocking are **action-locked**: the player is fully committed and cannot cancel into other actions. This enforces the "commitment and consequence" design philosophy. Additionally, the Bridge can set `ExternalActionLock` on the simulation to extend action-lock to bridge-owned conditions (e.g. knockback) without adding a simulation state. Phase 2 will replace this with simulation-owned knockback state.
 
-**Input blocking:** The input buffer only consumes entries when the player is in Idle or Moving. During action-locked states, buffered inputs remain in the queue and expire via TTL. This means early inputs pressed near the end of an animation are preserved and consumed when the player returns to an actionable state.
+**Input buffering vs consumption:** Inputs are always *buffered* (enqueued into the TTL queue) regardless of action-lock. However, the buffer only *consumes* entries when the player is in Idle or Moving AND `ExternalActionLock` is false. During action-locked states or external locks, buffered inputs remain in the queue and expire via TTL. This means early inputs pressed near the end of an animation or knockback are preserved and consumed when the player returns to an actionable state.
 
 **Slide-to-stop:** When entering a committed action from movement, the player's velocity decays at 0.85× per frame (friction-based slide) instead of stopping instantly. This produces a natural deceleration over ~15 frames. Stagger and Deathblow states halt movement completely (no slide).
 
@@ -274,7 +274,7 @@ Tier 0 damage is **conditional** on block state:
 - Universal fallback — **always available**, including during Fatigue
 - Causes Composure buildup on the blocker
 - **Chip damage**: Blocked T1–T3 attacks deal 20% Vitality damage (`ChipDamageMultiplier` = 0.2). T0 blocked attacks deal Composure only, no Vitality chip.
-- **Knockback**: Blocked T1+ attacks push the blocker backward based on the move's `KnockbackDistance`. Knockback is applied via a smooth ease-out curve over 16 frames (`KnockbackDurationFrames`) to prevent teleport-like impulses. Knockback suppresses input movement for its duration.
+- **Knockback**: Blocked T1+ attacks push the blocker backward based on the move's `KnockbackDistance`. Knockback duration is sourced from the move's `StaggerFrames` — a single source of truth for impact severity (heavier attacks suppress movement longer). Knockback is applied via a smooth ease-out curve over the duration to prevent teleport-like impulses. During knockback, the player is action-locked via `ExternalActionLock` — inputs are still buffered but not consumed, and no new actions can be initiated until knockback completes.
 - Attacker suffers no Composure penalty
 - Blocking T2 (Heavy) causes Weapon Recoil (resets neutral spacing)
 - **No effect on Shatter-modified strikes** — block occurs normally, Shatter whiffs
@@ -727,3 +727,4 @@ Before implementing rollback netcode, verify:
 6. **Manual Collision**: Hit detection via `IntersectShape()`, not Area3D signals ✅
 7. **Seeded RNG**: Visual variance uses `DeterministicRandom` from FixedMathSharp
 8. **LogicBlocks Migration**: Migrate hand-rolled state machine to Chickensoft LogicBlocks for hierarchical states and native serialization support
+9. **Knockback Internalization**: Replace `ExternalActionLock` bridge flag with simulation-owned `KnockbackFramesLeft` state. Knockback becomes part of `ApplyCombatResult` — simulation tracks duration, bridge reads it for visual curve. Eliminates bridge→simulation write dependency.

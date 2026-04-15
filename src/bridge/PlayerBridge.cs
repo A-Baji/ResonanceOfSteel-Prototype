@@ -20,7 +20,7 @@ namespace ResonanceOfSteel.Bridge
 		[Export] public float BaseMomentumOnHit = 0.5f;
 		[Export] public float RoWMomentumPerUnit = 0.375f;
 		[Export] public float RetreatDrainPerUnit = 0.1875f;
-		[Export] public float RoWMaxRange = 9f;
+		[Export] public float RoWMaxRange = 9.0f;
 		[Export] public float ClashMomentumSurge = 2.0f;
 		[Export] public float ComposureRecoveryRate = 0.0036f;
 		[Export] public int ComposureRecoveryCooldownFrames = 90;
@@ -81,17 +81,18 @@ namespace ResonanceOfSteel.Bridge
 		// Converts integer KnockbackDistance from MoveData to world-space displacement.
 		private const float KnockbackDistScale = 0.25f;
 
-		// Duration in physics frames over which knockback is smoothly applied.
-		private const int KnockbackDurationFrames = 16;
-
 		// When true, _PhysicsProcess is a no-op; GameCoordinator drives the phases.
 		private bool _coordinatorDriven;
 
-		// Smooth knockback state — applied via ease-out curve over KnockbackDurationFrames.
+		// Smooth knockback state — applied via ease-out curve over _knockbackDuration frames.
+		// Duration is sourced from StaggerFrames per move (single source of truth for impact severity).
 		private Vector3 _knockbackDir;
 		private float _knockbackTotalDist;
-		private int _knockbackFrame = KnockbackDurationFrames; // Start as "complete" (no active knockback)
+		private int _knockbackDuration = 1; // Per-knockback duration from StaggerFrames
+		private int _knockbackFrame = 1; // Start as "complete" (no active knockback)
 		private float _knockbackCoveredFrac;
+
+		public bool IsKnockbackActive => _knockbackFrame < _knockbackDuration;
 
 		public PlayerBridge Opponent { get; set; }
 		public IArchetypeData ArchetypeData { get; private set; }
@@ -172,6 +173,12 @@ namespace ResonanceOfSteel.Bridge
 			}
 
 			var input = BuildPlayerInput();
+
+			// Knockback action-lock: signal simulation to suppress input consumption.
+			// Inputs are still buffered normally — only consumption and held-block
+			// transitions are gated. Phase 2: replace with simulation-owned knockback state.
+			_sim.ExternalActionLock = IsKnockbackActive;
+
 			_sim.Tick(input);
 
 			ApplyMovement(input, delta);
@@ -248,11 +255,10 @@ namespace ResonanceOfSteel.Bridge
 
 		private void ApplyMovement(PlayerInput input, double delta)
 		{
-			bool knockbackActive = _knockbackFrame < KnockbackDurationFrames;
-
-			if (_sim.IsInDeathblow || _sim.IsStaggered)
+			if (_sim.IsInDeathblow || _sim.IsStaggered || IsKnockbackActive)
 			{
 				// Deathblow/Staggered: complete halt (knockback still applies via overlay).
+				// Active knockback: zero base velocity. Knockback curve is added below.
 				Velocity = Vector3.Zero;
 			}
 			else if (_sim.IsActionLocked)
@@ -260,11 +266,6 @@ namespace ResonanceOfSteel.Bridge
 				// Committed action: slide to stop from prior velocity.
 				var slide = new Vector3(Velocity.X, 0, Velocity.Z) * ActionLockFriction;
 				Velocity = slide.LengthSquared() < 0.01f ? Vector3.Zero : slide;
-			}
-			else if (knockbackActive)
-			{
-				// Active knockback during non-locked state: suppress input movement.
-				Velocity = Vector3.Zero;
 			}
 			else if (input.HasMovement)
 			{
@@ -280,11 +281,11 @@ namespace ResonanceOfSteel.Bridge
 				Velocity = Vector3.Zero;
 			}
 
-			// Smooth knockback: ease-out curve spreads displacement over KnockbackDurationFrames.
-			if (knockbackActive)
+			// Smooth knockback: ease-out curve spreads displacement over _knockbackDuration frames.
+			if (IsKnockbackActive)
 			{
 				_knockbackFrame++;
-				float t = (float)_knockbackFrame / KnockbackDurationFrames;
+				float t = (float)_knockbackFrame / _knockbackDuration;
 				// Ease-out: 1 - (1-t)^2 — fast at start, decelerating to stop.
 				float targetFrac = 1f - (1f - t) * (1f - t);
 				float frameDist = _knockbackTotalDist * (targetFrac - _knockbackCoveredFrac);
@@ -397,11 +398,13 @@ namespace ResonanceOfSteel.Bridge
 		public void NotifyShatterWhiff() => _sim.OnShatterWhiff();
 		public void NotifyClash() => _sim.OnClash();
 
-		public void ApplyKnockback(Vector3 direction, float distance)
+		public void ApplyKnockback(Vector3 direction, float distance, int durationFrames)
 		{
-			// Smooth knockback: store target displacement, applied over KnockbackDurationFrames via ease-out.
+			// Smooth knockback: store target displacement, applied over durationFrames via ease-out.
+			// durationFrames is sourced from StaggerFrames — the single source of truth for impact severity.
 			_knockbackDir = direction;
 			_knockbackTotalDist = distance * KnockbackDistScale;
+			_knockbackDuration = durationFrames > 0 ? durationFrames : 1;
 			_knockbackFrame = 0;
 			_knockbackCoveredFrac = 0f;
 		}
@@ -413,7 +416,7 @@ namespace ResonanceOfSteel.Bridge
 			_sim.ResetState();
 			GlobalPosition = spawnPosition;
 			Velocity = Vector3.Zero;
-			_knockbackFrame = KnockbackDurationFrames; // Mark knockback as complete
+			_knockbackFrame = _knockbackDuration; // Mark knockback as complete
 			_knockbackCoveredFrac = 1f;
 			_wasFatigued = false;
 		}

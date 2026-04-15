@@ -180,3 +180,7 @@ move_down_p2={
 [rendering]
 
 rendering_device/driver.windows="d3d12"
+
+[gdunit4]
+
+common/report_orphans=false

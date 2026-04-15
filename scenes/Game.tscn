@@ -43,6 +43,7 @@ shadow_enabled = true
 [node name="Player1" parent="." unique_id=1547398993 instance=ExtResource("3_s0nni")]
 
 [node name="Player2" parent="." unique_id=1914235749 instance=ExtResource("3_s0nni")]
+Archetype = 1
 PlayerIndex = 1
 
 [node name="DebugHud" parent="." unique_id=1837348842 node_paths=PackedStringArray("Player1", "Player2") instance=ExtResource("7_debug")]

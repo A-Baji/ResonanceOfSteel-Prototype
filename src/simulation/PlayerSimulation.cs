@@ -46,10 +46,19 @@ namespace ResonanceOfSteel.Simulation
 		public bool IsSwinging => _state is Swing;
 
 		/// <summary>
-		/// True during any committed action (attacks, evasion, stagger, deathblow).
-		/// Blocks input consumption and suppresses input-driven movement (slide-to-stop).
+		/// True during any committed action (attacks, evasion, stagger, deathblow)
+		/// or when externally locked (e.g. knockback). Blocks input consumption
+		/// and suppresses input-driven movement (slide-to-stop).
+		/// Phase 2: ExternalActionLock will be replaced by simulation-owned knockback state.
 		/// </summary>
-		public bool IsActionLocked => _state is not (Idle or Moving or Blocking);
+		public bool IsActionLocked => ExternalActionLock || _state is not (Idle or Moving or Blocking);
+
+		/// <summary>
+		/// Bridge-settable lock for conditions not yet owned by the simulation
+		/// (e.g. knockback). Set before Tick(), cleared when condition ends.
+		/// Phase 2: replace with simulation-owned KnockbackFramesLeft via ApplyCombatResult.
+		/// </summary>
+		public bool ExternalActionLock { get; set; }
 
 		// ── Debug properties (read by DebugHUD via Bridge) ──────────────
 		public int DebugBufferCount => _buffer.Count;
@@ -169,7 +178,8 @@ namespace ResonanceOfSteel.Simulation
 			// Frame Advantage Stack gradual decay.
 			Economy.TickStackDecay();
 
-			// Right-of-Way Momentum: displacement-based with range limit.
+			// Right-of-Way Momentum: displacement-based.
+			// Advance gain is range-limited; retreat drain always applies.
 			if (_state is Idle || _state is Moving || _state is Blocking)
 			{
 				var dispX = input.OwnPosX - _prevPosX;
@@ -182,14 +192,14 @@ namespace ResonanceOfSteel.Simulation
 					var toOppZ = input.OpponentPosZ - input.OwnPosZ;
 					var distSq = toOppX * toOppX + toOppZ * toOppZ;
 
-					if (distSq > Fixed64.Zero && distSq <= _constants.RoWMaxRangeSquared)
+					if (distSq > Fixed64.Zero)
 					{
 						// Project displacement onto opponent direction.
 						var dot = dispX * toOppX + dispZ * toOppZ;
 						var dist = FixedMath.Sqrt(distSq);
 						var towardDisp = dot / dist; // positive = toward, negative = away
 
-						if (towardDisp > Fixed64.Zero)
+						if (towardDisp > Fixed64.Zero && distSq <= _constants.RoWMaxRangeSquared)
 							Economy.AddRightOfWayMomentum(towardDisp);
 						else if (towardDisp < Fixed64.Zero)
 							Economy.DrainRetreatMomentum(-towardDisp);
@@ -203,7 +213,7 @@ namespace ResonanceOfSteel.Simulation
 
 			// Buffer management: enqueue new presses, consume only in actionable states, then age.
 			EnqueueInputs(input);
-			var consumed = (_state is Idle or Moving) ? _buffer.Consume() : PlayerInputAction.None;
+			var consumed = (!ExternalActionLock && _state is Idle or Moving) ? _buffer.Consume() : PlayerInputAction.None;
 			_buffer.Tick();
 
 			// Delegate to state-specific logic.
@@ -301,7 +311,7 @@ namespace ResonanceOfSteel.Simulation
 					}
 
 				default:
-					if (input.BlockParryHeld)
+					if (!ExternalActionLock && input.BlockParryHeld)
 						return new Blocking();
 					return null;
 			}
@@ -524,6 +534,7 @@ namespace ResonanceOfSteel.Simulation
 			_prematureBlockPenalties = 0;
 			_parrySucceededThisAttempt = false;
 			_posInitialized = false;
+			ExternalActionLock = false;
 			_buffer.Clear();
 		}
 	}

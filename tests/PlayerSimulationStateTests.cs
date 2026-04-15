@@ -250,7 +250,7 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Economy.SpendMomentum((Fixed64)4.0); // start at 0
-													 // First tick initializes position tracking. Second tick produces displacement.
+			// First tick initializes position tracking. Second tick produces displacement.
 			sim.Tick(MoveForwardInputAt(Fixed64.Zero));
 			sim.Tick(MoveForwardInputAt((Fixed64)0.067)); // ~1 frame of walk (4.0/60)
 			AssertThat((double)sim.Economy.Momentum).IsGreater(0.0);
@@ -314,19 +314,19 @@ namespace ResonanceOfSteel.Tests
 		{
 			var sim = CreateSim();
 			sim.Economy.SpendMomentum((Fixed64)4.0);
-			// Opponent at Z=5. Position at Z=-10.2 → distance = 15.2 > RoWMaxRange (15).
-			// Move toward opponent (Z=-10.2 → Z=-10.1) but beyond range → no momentum.
+			// Opponent at Z=5. Position at Z=-4.2 → distance = 9.2 > RoWMaxRange (9).
+			// Move toward opponent (Z=-4.2 → Z=-4.1) but beyond range → no momentum.
 			var farInput1 = new PlayerInput(
 				moveX: Fixed64.Zero, moveZ: Fixed64.One, runHeld: false,
 				attackJustPressed: false, blockParryHeld: false, blockParryJustPressed: false,
 				dodgeJustPressed: false, jumpJustPressed: false, modifierTier: AttackTier.Standard,
-				isGrounded: true, ownPosX: DefaultOwnX, ownPosZ: (Fixed64)(-10.2),
+				isGrounded: true, ownPosX: DefaultOwnX, ownPosZ: (Fixed64)(-4.2),
 				opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ);
 			var farInput2 = new PlayerInput(
 				moveX: Fixed64.Zero, moveZ: Fixed64.One, runHeld: false,
 				attackJustPressed: false, blockParryHeld: false, blockParryJustPressed: false,
 				dodgeJustPressed: false, jumpJustPressed: false, modifierTier: AttackTier.Standard,
-				isGrounded: true, ownPosX: DefaultOwnX, ownPosZ: (Fixed64)(-10.1),
+				isGrounded: true, ownPosX: DefaultOwnX, ownPosZ: (Fixed64)(-4.1),
 				opponentPosX: DefaultOppX, opponentPosZ: DefaultOppZ);
 			sim.Tick(farInput1);
 			sim.Tick(farInput2);
@@ -398,7 +398,7 @@ namespace ResonanceOfSteel.Tests
 			// Initialize position, then block-walk with displacement
 			sim.Tick(BlockWalkForwardInputAt(Fixed64.Zero));
 			sim.Tick(BlockWalkForwardInputAt((Fixed64)0.033)); // ~1 frame of block-walk (2.0/60)
-															   // Walking toward opponent while blocking should generate RoW
+			// Walking toward opponent while blocking should generate RoW
 			AssertThat((double)sim.Economy.Momentum).IsGreater(0.0);
 		}
 
@@ -455,7 +455,7 @@ namespace ResonanceOfSteel.Tests
 			// Attack pressed while blocking goes to buffer; consumed when block is released
 			var sim = CreateSim();
 			sim.Tick(BlockHeldInput()); // enter Blocking
-										// Press attack while holding block (attack buffered, block continues)
+			// Press attack while holding block (attack buffered, block continues)
 			var blockWithAttack = new PlayerInput(
 				moveX: Fixed64.Zero, moveZ: Fixed64.Zero,
 				runHeld: false, attackJustPressed: true,
@@ -588,7 +588,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(BlockParryPressInput()); // enter Parrying(6)
 			sim.OnParrySuccess(); // successful parry during window
 			TickN(sim, 5); // exhaust remaining window → Blocking
-						   // Penalty should NOT have incremented because success flag was set
+			// Penalty should NOT have incremented because success flag was set
 			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
 		}
 
@@ -612,7 +612,7 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(BlockParryPressInput());
 			TickN(sim, 6);
 			sim.Tick(EmptyInput()); // exit blocking
-									// Enter parry again — should have 3-frame window
+			// Enter parry again — should have 3-frame window
 			sim.Tick(BlockParryPressInput());
 			AssertThat(sim.IsParrying).IsTrue();
 			// After 3 ticks, should be in Blocking (not still Parrying)
@@ -629,7 +629,7 @@ namespace ResonanceOfSteel.Tests
 			TickN(sim, 6);
 			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
 			sim.Tick(EmptyInput()); // exit blocking
-									// Tick 30 empty frames (inactivity threshold)
+			// Tick 30 empty frames (inactivity threshold)
 			TickN(sim, 30);
 			AssertThat(sim.PrematureBlockPenalties).IsEqual(0);
 			AssertThat(sim.EffectiveParryWindowFrames).IsEqual(6);
@@ -642,8 +642,8 @@ namespace ResonanceOfSteel.Tests
 			sim.Tick(BlockParryPressInput());
 			TickN(sim, 6); // whiff → penalty = 1
 			sim.Tick(EmptyInput()); // exit blocking
-									// Tick only 22 frames — not enough for reset
-									// (6 parry ticks + 1 exit + 22 = 29 frames since press, under threshold)
+			// Tick only 22 frames — not enough for reset
+			// (6 parry ticks + 1 exit + 22 = 29 frames since press, under threshold)
 			TickN(sim, 22);
 			AssertThat(sim.PrematureBlockPenalties).IsEqual(1);
 		}
@@ -694,7 +694,7 @@ namespace ResonanceOfSteel.Tests
 			var sim = CreateSim();
 			double before = (double)sim.Economy.Momentum;
 			sim.Tick(AttackInput()); // enter Coil (action-locked)
-									 // Tick with forward movement during action lock
+			// Tick with forward movement during action lock
 			sim.Tick(MoveForwardInput());
 			double after = (double)sim.Economy.Momentum;
 			// No RoW momentum should be generated during action lock

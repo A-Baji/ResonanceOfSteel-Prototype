@@ -141,8 +141,8 @@ namespace ResonanceOfSteel.Bridge
 					{
 						var clashDir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
 						clashDir.Y = 0;
-						OwnerBridge.ApplyKnockback(-clashDir, move.KnockbackDistance);
-						OpponentBridge.ApplyKnockback(clashDir, move.KnockbackDistance);
+						OwnerBridge.ApplyKnockback(-clashDir, move.KnockbackDistance, move.StaggerFrames);
+						OpponentBridge.ApplyKnockback(clashDir, move.KnockbackDistance, move.StaggerFrames);
 					}
 					break;
 
@@ -187,7 +187,7 @@ namespace ResonanceOfSteel.Bridge
 					{
 						var dir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
 						dir.Y = 0;
-						OpponentBridge.ApplyKnockback(dir, move.KnockbackDistance);
+						OpponentBridge.ApplyKnockback(dir, move.KnockbackDistance, move.StaggerFrames);
 					}
 					break;
 
@@ -202,7 +202,8 @@ namespace ResonanceOfSteel.Bridge
 						var dir = (OpponentBridge.GlobalPosition - OwnerBridge.GlobalPosition).Normalized();
 						dir.Y = 0;
 						OpponentBridge.ApplyKnockback(dir,
-							move.KnockbackDistance * OwnerBridge.StaggerKnockbackMultiplier);
+							move.KnockbackDistance * OwnerBridge.StaggerKnockbackMultiplier,
+							move.StaggerFrames);
 					}
 					break;
 			}
