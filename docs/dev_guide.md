@@ -769,7 +769,7 @@ Verify by running the project. These behaviors involve physics integration, visu
 - [x] 2-second delay between rounds feels appropriately paced
 - [x] Full reset between rounds: positions, all economy values, states restored
 - [x] Match ends correctly when one player reaches 0 lives; "Player X Wins!" overlay shown, game paused
-- [ ] ESC quits the game from the victory overlay
+- [x] ESC quits the game from the victory overlay
 
 #### Two-Pass Architecture (Fallback)
 - [ ] Standalone `PlayerBridge._PhysicsProcess` (without `GameCoordinator`) still runs correctly for solo testing scenes
